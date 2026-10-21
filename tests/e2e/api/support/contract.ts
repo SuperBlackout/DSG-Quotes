@@ -25,7 +25,7 @@ export function deref<T extends Schema | undefined>(node: T): T {
     if (seen.has(cur.$ref)) throw new Error(`Circular $ref ${cur.$ref}`);
     seen.add(cur.$ref);
     const parts = cur.$ref.replace(/^#\//, "").split("/");
-    const next = parts.reduce<any>((acc, p) => acc?.[p], spec);
+    const next = parts.reduce((acc: any, p: string) => acc?.[p], spec as any);
     if (!next) throw new Error(`Unresolved $ref ${cur.$ref}`);
     cur = next;
   }
