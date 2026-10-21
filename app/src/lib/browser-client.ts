@@ -6,7 +6,6 @@
  * We wait up to 5 s for it, which covers the script-load race.
  */
 import { createStaffClient, type StaffClient } from "./api-client";
-import { createSettingsClient, type SettingsClient } from "./proposed-api";
 
 type ShopifyGlobal = typeof shopify;
 const globalShopify = (): ShopifyGlobal | undefined => (globalThis as { shopify?: ShopifyGlobal }).shopify;
@@ -22,7 +21,7 @@ async function waitForShopify(timeoutMs = 5000): Promise<ShopifyGlobal> {
   throw new Error("Shopify App Bridge is not available. Open this app from the Shopify admin.");
 }
 
-let cached: { staff: StaffClient; settings: SettingsClient } | null = null;
+let cached: { staff: StaffClient } | null = null;
 
 export function getBrowserClients() {
   if (!cached) {
@@ -30,7 +29,7 @@ export function getBrowserClients() {
       baseUrl: "/api",
       getToken: async () => (await waitForShopify()).idToken(),
     });
-    cached = { staff, settings: createSettingsClient(staff) };
+    cached = { staff };
   }
   return cached;
 }
