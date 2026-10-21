@@ -23,8 +23,8 @@ import { asAttachments } from "../serializers/customer";
 import { staffMessage, staffSummary } from "../serializers/staff";
 import { registerAdminRoutes } from "./staffAdmin";
 
-// At most 10 integer digits: the database columns are DECIMAL(12,2) (anything bigger is a 422, never a 500).
-const money = z.string().regex(/^\d{1,10}(\.\d{1,2})?$/, "Amount like 12.50 (up to 9999999999.99)");
+// Shape only. The size limit is enforced in the domain (assertFits): anything beyond DECIMAL(12,2) is a 422, never a 500.
+const money = z.string().regex(/^\d+(\.\d{1,2})?$/, "Amount like 12.50");
 const newJob = z.object({ name: z.string().min(1).max(200), poNumber: z.string().max(100).optional(), siteAddress: z.string().max(500).optional() });
 
 /** `limit` is 1..100; larger values are clamped to 100. */

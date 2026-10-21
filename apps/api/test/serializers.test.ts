@@ -8,6 +8,9 @@ const FORBIDDEN_KEYS = [
   "cost", "unitCost", "margin", "marginPct", "marginTotal", "internalNote", "workingInternalNote", "workingRepNote",
   "workingFreight", "workingLines", "belowFloor", "floorApproved", "floorApprovedById", "internal", "customerEmail",
   "latestChangeRequest", "createdByStaffId", "draftOrderInvoiceUrl", "priceFloorPct",
+  // contract 0.2.0 staff-only additions
+  "costUnknown", "costUnknownLineIds", "paymentTerms", "customerContactName", "customerContactPhone", "nextVersionNo", "workingExpiresAt",
+  "itemCount", "requester",
 ];
 const SECRETS = ["SECRET-INTERNAL-NOTE", "SECRET-QUOTE-INTERNAL", "SECRET-THIN-MARGIN", "SECRET-WORKING-NOTE"];
 
@@ -82,11 +85,22 @@ describe("customer serializer privacy (CLAUDE.md rules 4 and 5)", () => {
     await get("request-changes", h.c.post(`/c/quotes/${id}/request-changes`, { message: "please adjust" }));
     await get("GET active-quote", h.c.get("/c/active-quote"));
     await get("GET notification-prefs", h.c.get("/c/notification-prefs"));
+    await get("PUT notification-prefs", h.c.put("/c/notification-prefs", {
+      events: Object.fromEntries(["QUOTE_RECEIVED", "QUOTE_READY", "NEW_MESSAGE", "EXPIRING", "ORDERED", "ACCEPTED", "WEEKLY_SUMMARY"].map((k) => [k, { email: true, sms: false }])),
+      email: "dana@example.test",
+      watchers: [{ email: "w@example.test", scope: "all", channels: { email: true, sms: false } }],
+    }));
 
     expect(responses.length).toBeGreaterThan(8);
     for (const [label, body] of responses) assertCustomerSafe(label, body, costs);
 
     // The customer sees the sent version's prices, not the working edits.
+    // The PDF is customer-safe too: text of the document carries no cost, margin or internal notes.
+    const pdf = await h.c.get(`/c/quotes/${id}/pdf`);
+    expect(pdf.status).toBe(200);
+    for (const s of [...SECRETS, ...costs, "SECRET-WORKING-NOTE"]) expect(pdf.text, `pdf leaked ${s}`).not.toContain(s);
+    expect(pdf.text).toContain("Customer-visible note");
+
     const view = responses.find(([l]) => l === "GET /c/quotes/:id (sent)")![1];
     expect(view.versions).toHaveLength(1);
     expect(view.versions[0].repNote).toBe("Customer-visible note");
