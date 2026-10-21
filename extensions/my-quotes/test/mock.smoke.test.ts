@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { createApiClient } from "../src/api/client";
 import { buildDetailView, versionTabs } from "../src/lib/detail";
 import { chipCounts, groupQuotes } from "../src/lib/filters";
-import { formFromPrefs, validatePrefs } from "../src/lib/notifications";
+import { EVENT_KEYS, formFromPrefs, validatePrefs } from "../src/lib/notifications";
 import { rowActions, statusBanner } from "../src/lib/status";
 
 const url = process.env.MOCK_API_URL;
@@ -46,6 +46,22 @@ describe.skipIf(!url)("against the API mock", () => {
     expect(m.body).toBeDefined();
     const up = await api.createUpload("any-id", { name: "a.pdf", size: 10, mime: "application/pdf" });
     expect(up.uploadUrl).toBeTruthy();
+  });
+
+  it("lists rows with the 0.2.0 summary fields and the seven notification events", async () => {
+    const page = await api.listQuotes({ limit: 100 });
+    for (const q of page.items) {
+      expect(typeof q.unreadCount).toBe("number");
+      expect(typeof q.currencyCode).toBe("string");
+      expect(typeof q.actions.canEditHeader).toBe("boolean");
+    }
+    const form = formFromPrefs(await api.getNotificationPrefs());
+    expect(Object.keys(form.events).sort()).toEqual([...EVENT_KEYS].sort());
+  });
+
+  it("fetches a quote PDF as a blob", async () => {
+    const file = await api.downloadPdf("any-id");
+    expect(file.blob.size).toBeGreaterThan(0);
   });
 
   it("checkout returns a redirect target", async () => {
