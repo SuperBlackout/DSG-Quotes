@@ -17,6 +17,7 @@ The lead scaffold deliberately does NOT run `shopify app init` (needs auth). Som
 - [ ] Create a **development store** with Shopify Plus features (B2B / Companies) enabled (Dev Dashboard > Stores, "Plus sandbox"/dev store with B2B).
 - [ ] Create 2 companies, each with a location, 3 dealer contacts, and a catalog with price lists. Create 2 staff accounts (rep) and 1 manager.
 - [ ] Turn on **new customer accounts** (Settings > Customer accounts) so the My Quotes extension works.
+- [ ] Add **My Quotes** to the customer account menu by hand: Shopify admin > Settings > Checkout (Customize) > **Customer accounts** > the **checkout and accounts editor** > Menu. A full-page customer account extension does not add itself to the menu, so it stays hidden until you add it here.
 - [ ] Add ~20 products with cost per item set.
 
 ## 3. Scaffold the Shopify app (once, by one person)
@@ -37,6 +38,7 @@ shopify app init --template=reactRouter --name dsg-quotes   # TypeScript, link t
   Verify each scope name in the current docs; add any B2B scope the draft-order `purchasingEntity` call requires.
 - [ ] Configure the app proxy: prefix `apps`, subpath `quotes`, proxy URL `<SHOPIFY_APP_URL>/proxy`.
 - [ ] Subscribe webhooks in the toml: `orders/create`, `draft_orders/update`, `app/uninstalled`, and the mandatory compliance topics (`customers/data_request`, `customers/redact`, `shop/redact`).
+- [ ] **Approve network access** for the My Quotes extension in the Dev Dashboard (app version > extension > Network access). The extension calls `https://quotes.dsg.direct/c/*` from the customer account sandbox; until network access is approved (and `network_access = true` is set in the extension toml) every call is blocked. The API must answer CORS preflights for the `null` origin (see `docs/openapi.yaml`).
 - [ ] Protected customer data: request access in the Dev Dashboard (customer name/email/phone) if the app is not exempt.
 - [ ] `shopify app dev`, install on the dev store, confirm the admin app loads.
 
@@ -49,6 +51,7 @@ shopify app init --template=reactRouter --name dsg-quotes   # TypeScript, link t
 ## 5. Twilio (start immediately, approval takes days to weeks)
 - [ ] Create a Twilio account and upgrade it. Register the business in **Trust Hub** (Customer Profile).
 - [ ] Register an **A2P 10DLC Brand** and **Campaign** (use case: Account notifications / Customer care). Provide the opt-in consent text used in the My Quotes notification page, sample messages, privacy policy and terms URLs.
+- [ ] Confirm these URLs exist and load (open them in a browser) before submitting: Terms `https://dsg.direct/policies/terms-of-service` and Privacy `https://dsg.direct/policies/privacy-policy`. The path is `/policies/privacy-policy`, not `/privacy`. If either 404s, publish the policy in Shopify (Settings > Policies) first; a campaign with dead URLs is rejected.
 - [ ] Buy a local number (or toll-free + verification), attach it to a **Messaging Service**, link the Campaign.
 - [ ] Set the Messaging Service inbound webhook to `https://<web>/hooks/twilio-inbound`. Copy SID/token/Service SID to Render.
 - [ ] Until approved, test SMS only to verified numbers.
