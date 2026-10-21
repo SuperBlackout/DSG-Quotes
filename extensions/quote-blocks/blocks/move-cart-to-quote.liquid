@@ -1,0 +1,51 @@
+{%- comment -%}
+  DSG Quotes: "Move cart to quote" (mockup screen 2). Form is built by assets/dsg-move-cart.js.
+{%- endcomment -%}
+{{ 'dsg-quotes.css' | asset_url | stylesheet_tag }}
+{%- liquid
+  assign sep = '?'
+  if routes.account_login_url contains '?'
+    assign sep = '&'
+  endif
+  assign login_url = routes.account_login_url | append: sep | append: 'return_url=' | append: request.path | url_encode
+-%}
+<div
+  class="dsg-mc"
+  role="region"
+  data-dsg-move-cart
+  data-logged-in="{% if customer %}true{% else %}false{% endif %}"
+  data-currency="{{ cart.currency.iso_code }}"
+  data-heading="{{ block.settings.heading | escape }}"
+  data-subheading="{{ block.settings.subheading | escape }}"
+  data-my-quotes-url="{{ block.settings.my_quotes_url | default: routes.account_url }}"
+  data-base="/apps/quotes"
+  {% if block.settings.accent != blank %}style="--dsg-accent: {{ block.settings.accent }}; --dsg-on-accent: {{ block.settings.on_accent | default: '#ffffff' }}"{% endif %}
+  {{ block.shopify_attributes }}
+>
+  {%- unless customer -%}
+    <div class="dsg-card">
+      <strong class="dsg-mc__title">{{ block.settings.heading }}</strong>
+      <p class="dsg-note">Quotes use your dealer pricing.</p>
+      <a class="dsg-btn dsg-btn--primary" href="{{ login_url }}" data-dsg-signin>Sign in to request a quote</a>
+    </div>
+  {%- endunless -%}
+</div>
+{%- if customer -%}
+  <script src="{{ 'dsg-quotes-core.js' | asset_url }}" defer></script>
+  <script src="{{ 'dsg-move-cart.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Move cart to quote",
+  "target": "section",
+  "templates": ["cart"],
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Need better pricing? Move cart to a quote" },
+    { "type": "text", "id": "subheading", "label": "Subheading", "default": "Sales reviews it and replies, usually same business day." },
+    { "type": "text", "id": "my_quotes_url", "label": "My Quotes URL", "info": "Customer account page for quotes. Use {id} where the quote id goes. Blank uses the account page." },
+    { "type": "color", "id": "accent", "label": "Accent color", "info": "Leave empty to inherit the theme's text color." },
+    { "type": "color", "id": "on_accent", "label": "Text on accent color", "default": "#ffffff" }
+  ]
+}
+{% endschema %}
