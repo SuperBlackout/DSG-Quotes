@@ -1,0 +1,5 @@
+node_modules
+.hits.jsonl
+playwright-report
+test-results
+.auth
