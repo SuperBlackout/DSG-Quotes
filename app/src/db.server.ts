@@ -14,8 +14,12 @@ declare global {
 }
 
 async function create(): Promise<PrismaForSessions> {
-  const mod = (await import("@prisma/client")) as unknown as { PrismaClient: new () => PrismaForSessions };
-  return new mod.PrismaClient();
+  // The schema uses engineType "client" (no Rust engine), which requires the pg driver adapter, as in apps/api/src/db.ts.
+  const { PrismaPg } = await import("@prisma/adapter-pg");
+  const mod = (await import("@prisma/client")) as unknown as {
+    PrismaClient: new (opts: { adapter: unknown }) => PrismaForSessions;
+  };
+  return new mod.PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 }
 
 const prisma: PrismaForSessions = global.prismaGlobal ?? (await create());

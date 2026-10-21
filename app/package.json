@@ -15,6 +15,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^6.19.3",
     "@prisma/client": "^6.19.0",
     "@react-router/dev": "7.18.2",
     "@react-router/fs-routes": "7.18.2",
