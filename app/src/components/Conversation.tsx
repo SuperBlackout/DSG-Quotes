@@ -1,12 +1,25 @@
-import { useState } from "react";
-import type { StaffMessage } from "../lib/api-client";
-import type { SavedReply } from "../lib/proposed-api";
+import { useRef, useState } from "react";
+import type { SavedReply, StaffMessage } from "../lib/api-client";
+import { validateAttachment } from "../lib/attachments";
 import { ErrorBanner, errorMessage } from "./common";
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function Attachments({ items }: { items: StaffMessage["attachments"] | undefined }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <s-stack gap="small-500">
+      {items.map((a) => (
+        <s-link key={a.url} href={a.url} target="_blank">
+          {a.name}
+        </s-link>
+      ))}
+    </s-stack>
+  );
 }
 
 function MessageRow({ m }: { m: StaffMessage }) {
@@ -26,6 +39,7 @@ function MessageRow({ m }: { m: StaffMessage }) {
         <s-stack gap="small-300">
           <s-badge tone="warning">Internal · staff only</s-badge>
           <s-paragraph>{m.body}</s-paragraph>
+          <Attachments items={m.attachments} />
           <s-text color="subdued">
             {meta}
           </s-text>
@@ -38,6 +52,7 @@ function MessageRow({ m }: { m: StaffMessage }) {
     <s-box padding="small" background={fromCustomer ? "base" : "strong"} border="base" borderRadius="base">
       <s-stack gap="small-300">
         <s-paragraph>{m.body}</s-paragraph>
+        <Attachments items={m.attachments} />
         <s-text color="subdued">
           {meta}
         </s-text>
@@ -50,20 +65,34 @@ export function Conversation({
   messages,
   customerName,
   savedReplies,
+  manageRepliesHref,
   disabled,
   onSend,
 }: {
   messages: StaffMessage[];
   customerName: string;
   savedReplies: SavedReply[];
+  manageRepliesHref?: string;
   disabled?: boolean;
-  onSend: (body: string, internal: boolean) => Promise<void>;
+  /** Uploads `files` (signed URL, PUT) and posts the message. Throws on failure; the draft is kept. */
+  onSend: (body: string, internal: boolean, files: File[]) => Promise<void>;
 }) {
   const [mode, setMode] = useState<"customer" | "internal">("customer");
   const [text, setText] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const internal = mode === "internal";
+
+  const addFiles = (list: FileList | null) => {
+    const picked = Array.from(list ?? []);
+    const bad = picked.map((f) => validateAttachment(f)).find((p) => p !== null);
+    if (bad) setError(bad);
+    else setError(null);
+    setFiles((prev) => [...prev, ...picked.filter((f) => validateAttachment(f) === null)]);
+    if (fileInput.current) fileInput.current.value = "";
+  };
 
   const send = async () => {
     const body = text.trim();
@@ -71,8 +100,9 @@ export function Conversation({
     setBusy(true);
     setError(null);
     try {
-      await onSend(body, internal);
+      await onSend(body, internal, files);
       setText("");
+      setFiles([]);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -116,6 +146,28 @@ export function Conversation({
         disabled={disabled}
         onInput={(e) => setText(e.currentTarget.value)}
       />
+      <s-stack gap="small-300">
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          aria-label="Attach files"
+          disabled={disabled || busy}
+          onChange={(e) => addFiles(e.currentTarget.files)}
+        />
+        {files.map((f, i) => (
+          <s-stack key={`${f.name}-${i}`} direction="inline" gap="small-300" alignItems="center">
+            <s-text>{f.name}</s-text>
+            <s-button
+              variant="tertiary"
+              icon="delete"
+              accessibilityLabel={`Remove attachment ${f.name}`}
+              disabled={busy}
+              onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+            />
+          </s-stack>
+        ))}
+      </s-stack>
       <s-stack direction="inline" gap="small" alignItems="center">
         <s-select
           label="Saved replies"
@@ -138,6 +190,7 @@ export function Conversation({
           {internal ? "Add note" : "Send"}
         </s-button>
       </s-stack>
+      {manageRepliesHref ? <s-link href={manageRepliesHref}>Manage saved replies</s-link> : null}
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
     </s-stack>
   );

@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { addVariants } from "./editor-ops";
 import {
+  contactSummary,
   dateInputToIso,
   diffAgainstVersion,
+  flaggedLineIds,
   formatMoneyWhole,
+  hasPendingSnapshot,
   isDirty,
+  itemCountLabel,
   nextVersionNo,
+  snapshotState,
   parseQuoteNumber,
   quoteActions,
   stateFromQuote,
@@ -43,6 +49,7 @@ const quote = (over: Partial<StaffQuote> = {}): StaffQuote =>
     total: "3911.00",
     updatedAt: "2026-10-20T10:00:00Z",
     expiresAt: "2026-11-04T23:59:59.000Z",
+    workingExpiresAt: "2026-11-04T23:59:59.000Z",
     currentVersion: 1,
     workingLines: [line({ id: "b", position: 1, title: "B" }), line({ id: "a", position: 0, title: "A" })],
     workingFreight: "120.00",
@@ -63,9 +70,49 @@ describe("editor state mapping", () => {
     expect(s.internalNote).toBe("");
   });
 
-  it("keeps unknown cost as null", () => {
-    const s = stateFromQuote(quote({ workingLines: [line({ cost: null })] }));
+  it("keeps unknown cost as null and flags it", () => {
+    const s = stateFromQuote(quote({ workingLines: [line({ cost: null, costUnknown: true, marginPct: null, belowFloor: true })] }));
     expect(s.lines[0]!.costCents).toBeNull();
+    expect(s.lines[0]!.costUnknown).toBe(true);
+  });
+
+  it("treats a saved line with no cost as unknown even without the server flag, and a costed line as known", () => {
+    expect(stateFromQuote(quote({ workingLines: [line({ cost: null })] })).lines[0]!.costUnknown).toBe(true);
+    expect(stateFromQuote(quote()).lines[0]!.costUnknown).toBe(false);
+  });
+
+  it("reads the editable expiry from workingExpiresAt, not expiresAt", () => {
+    expect(stateFromQuote(quote({ workingExpiresAt: "2026-12-01T23:59:59.000Z", expiresAt: "2026-11-04T23:59:59.000Z" })).expiresOn).toBe("2026-12-01");
+    expect(stateFromQuote(quote({ workingExpiresAt: null, expiresAt: "2026-11-04T23:59:59.000Z" })).expiresOn).toBe("");
+  });
+
+  it("sends the working expiry back as expiresAt", () => {
+    const s = stateFromQuote(quote({ workingExpiresAt: "2026-12-01T23:59:59.000Z" }));
+    expect(toDraftRequest(s).expiresAt).toBe("2026-12-01T23:59:59.000Z");
+    expect(toDraftRequest({ ...s, expiresOn: "" }).expiresAt).toBeNull();
+  });
+
+  it("tracks lines that still need the snapshot save", () => {
+    const s = stateFromQuote(quote());
+    expect(hasPendingSnapshot(s)).toBe(false);
+    const added = addVariants(s, [{ variantId: "v9", title: "N", sku: null, priceCents: 100, imageUrl: null }], () => "new-1");
+    expect(hasPendingSnapshot(added)).toBe(true);
+    expect(snapshotState(added.lines[2]!)).toBe("pending");
+    expect(snapshotState(added.lines[0]!)).toBe("saved");
+  });
+
+  it("lists saved lines that need a manager", () => {
+    const s = stateFromQuote(
+      quote({
+        workingLines: [
+          line({ id: "ok", position: 0 }),
+          line({ id: "unk", position: 1, cost: null, costUnknown: true }),
+          line({ id: "low", position: 2, quotedPrice: "600.00" }),
+          line({ id: "appr", position: 3, cost: null, costUnknown: true, floorApproved: true }),
+        ],
+      }),
+    );
+    expect(flaggedLineIds(s.lines, 15)).toEqual(["unk", "low"]);
   });
 
   it("builds a draft-revision request: ids only for saved lines, money strings, nulls for blanks", () => {
@@ -144,10 +191,24 @@ describe("diff against the last sent version", () => {
 });
 
 describe("workflow", () => {
-  it("computes the next version number", () => {
+  it("uses the server's nextVersionNo, never currentVersion + 1", () => {
+    // After a reopen and resend currentVersion lags the highest sent version.
+    expect(nextVersionNo(quote({ currentVersion: 1, nextVersionNo: 4, versions: [{ versionNo: 3 } as never] }))).toBe(4);
+    expect(nextVersionNo(quote({ currentVersion: 2, nextVersionNo: 3 }))).toBe(3);
+  });
+
+  it("falls back to the server's rule (max of both + 1) when the field is absent", () => {
     expect(nextVersionNo({ currentVersion: 1, versions: [] })).toBe(2);
     expect(nextVersionNo({ currentVersion: undefined, versions: [] })).toBe(1);
     expect(nextVersionNo(quote({ currentVersion: 1, versions: [{ versionNo: 3 } as never] }))).toBe(4);
+  });
+
+  it("summarises the buyer contact", () => {
+    expect(contactSummary({ customerName: "Dana K.", customerContactName: "Sam P.", customerContactPhone: "+13125550123" })).toEqual({
+      name: "Sam P.",
+      phone: "+13125550123",
+    });
+    expect(contactSummary({ customerName: "Dana K.", customerContactName: null, customerContactPhone: " " })).toEqual({ name: "Dana K.", phone: null });
   });
 
   it("derives actions from the shared state machine", () => {
@@ -181,15 +242,22 @@ describe("waiting timer", () => {
 });
 
 describe("inbox helpers", () => {
-  it("maps summary counts to tabs", () => {
-    const s = { needsResponse: 5, unassigned: 2, openValue: "64210.00", acceptedThisWeek: 6, expiringSoon: 2 };
+  it("reads tab badges from summary.tabCounts", () => {
+    const s = { tabCounts: { needs_response: 5, unassigned: 2, waiting_customer: 7, accepted: 6, expiring: 3, all: 41 } };
     expect(tabCount("needs_response", s)).toBe(5);
     expect(tabCount("unassigned", s)).toBe(2);
-    expect(tabCount("expiring", s)).toBe(2);
+    expect(tabCount("waiting_customer", s)).toBe(7);
     expect(tabCount("accepted", s)).toBe(6);
-    expect(tabCount("all", s)).toBeUndefined();
-    expect(tabCount("waiting_customer", s)).toBeUndefined();
+    expect(tabCount("expiring", s)).toBe(3);
+    expect(tabCount("all", s)).toBe(41);
     expect(tabCount("all", null)).toBeUndefined();
+    expect(tabCount("all", {} as never)).toBeUndefined();
+  });
+
+  it("labels item counts", () => {
+    expect(itemCountLabel(1)).toBe("1 item");
+    expect(itemCountLabel(4)).toBe("4 items");
+    expect(itemCountLabel(undefined)).toBe("0 items");
   });
 
   it("formats whole-dollar tiles", () => {

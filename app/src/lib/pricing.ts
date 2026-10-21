@@ -19,8 +19,13 @@ export interface PricedLine {
   qty: number;
   /** Dealer / list price per unit in cents. */
   listPriceCents: Cents;
-  /** Unit cost in cents, null when unknown (e.g. a freshly picked variant before the first save). */
+  /**
+   * Unit cost in cents, null when not known: either the line has not been saved yet (the server snapshots cost on
+   * the first draft-revision save) or the server could not read it from inventory (`costUnknown`).
+   */
   costCents: Cents | null;
+  /** Server flag: cost could not be read from inventory. Margin is a dash and a manager must approve the line. */
+  costUnknown?: boolean;
   /** Quoted unit price in cents. */
   quotedPriceCents: Cents;
   floorApproved?: boolean;
@@ -65,6 +70,16 @@ export function toMoneyString(cents: Cents): string {
   return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
 }
 
+/** Display in the quote's ISO 4217 currency; USD formatting for a missing, USD or unrecognised code. */
+export function formatMoneyIn(cents: Cents, currencyCode: string | null | undefined): string {
+  if (!currencyCode || currencyCode === "USD") return formatMoney(cents);
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: currencyCode }).format(cents / 100);
+  } catch {
+    return formatMoney(cents);
+  }
+}
+
 /** Display format with thousands separators: 123450 -> "$1,234.50". */
 export function formatMoney(cents: Cents): string {
   const sign = cents < 0 ? "-" : "";
@@ -106,20 +121,36 @@ export function minPriceForFloor(costCents: Cents | null, floorPct: number): Cen
   return Math.ceil((costCents * 10000) / (10000 - bps));
 }
 
+/** Why a line needs a manager: under the floor, or the server could not find its cost. */
+export type ApprovalReason = "below_floor" | "unknown_cost";
+
+/**
+ * Whether a line blocks Send until a manager approves it. Unknown cost always needs approval (the server marks it
+ * `belowFloor` with a null margin); an approved line never blocks. A line that has not been saved yet has no cost
+ * either, but is not "unknown": it is waiting for the save that snapshots its cost.
+ */
+export function approvalReason(line: PricedLine, floorPct: number): ApprovalReason | null {
+  if (line.floorApproved) return null;
+  if (line.costUnknown) return "unknown_cost";
+  if (isBelowFloor(line.quotedPriceCents, line.costCents, floorPct)) return "below_floor";
+  return null;
+}
+
 export interface FloorViolation<T> {
   index: number;
   line: T;
+  reason: ApprovalReason;
+  /** Null for unknown-cost lines. */
   marginPct: number | null;
 }
 
-/** Lines under the floor that have not been manager-approved. */
+/** Lines under the floor or with unknown cost that have not been manager-approved. */
 export function floorViolations<T extends PricedLine>(lines: readonly T[], floorPct: number): FloorViolation<T>[] {
   const out: FloorViolation<T>[] = [];
   lines.forEach((line, index) => {
-    if (line.floorApproved) return;
-    if (isBelowFloor(line.quotedPriceCents, line.costCents, floorPct)) {
-      out.push({ index, line, marginPct: marginPct(line.quotedPriceCents, line.costCents) });
-    }
+    const reason = approvalReason(line, floorPct);
+    if (!reason) return;
+    out.push({ index, line, reason, marginPct: reason === "unknown_cost" ? null : marginPct(line.quotedPriceCents, line.costCents) });
   });
   return out;
 }
@@ -135,8 +166,10 @@ export interface QuoteTotals {
   marginCents: Cents;
   /** Quote margin % (one decimal), freight excluded. Null if no line has a cost. */
   marginPct: number | null;
-  /** True if at least one line has unknown cost, so margin only covers part of the quote. */
+  /** True if at least one line has no cost (unsaved or unknown), so margin only covers part of the quote. */
   marginPartial: boolean;
+  /** Lines the server flagged `costUnknown`. */
+  unknownCostCount: number;
   /** Sum of qty * (list - quoted); positive means discounted below dealer price. */
   discountCents: Cents;
 }
@@ -147,12 +180,14 @@ export function computeTotals(lines: readonly PricedLine[], freightCents: Cents 
   let costedRevenue = 0;
   let discount = 0;
   let unknown = 0;
+  let unknownFlagged = 0;
   for (const l of lines) {
     const total = lineTotalCents(l);
     subtotal += total;
     discount += Math.trunc(l.qty) * (l.listPriceCents - l.quotedPriceCents);
-    if (l.costCents === null) {
+    if (l.costCents === null || l.costUnknown) {
       unknown += 1;
+      if (l.costUnknown) unknownFlagged += 1;
     } else {
       cost += Math.trunc(l.qty) * l.costCents;
       costedRevenue += total;
@@ -168,6 +203,7 @@ export function computeTotals(lines: readonly PricedLine[], freightCents: Cents 
     marginCents: margin,
     marginPct: costedRevenue > 0 ? roundTo((margin / costedRevenue) * 100, 1) : null,
     marginPartial: unknown > 0,
+    unknownCostCount: unknownFlagged,
     discountCents: discount,
   };
 }

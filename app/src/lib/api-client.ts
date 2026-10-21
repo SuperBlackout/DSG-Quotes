@@ -15,6 +15,21 @@ export type StaffSummary = Schemas["StaffSummary"];
 export type DraftRevisionRequest = Schemas["DraftRevisionRequest"];
 export type StaffLineInput = Schemas["StaffLineInput"];
 export type ApiErrorBody = Schemas["Error"];
+export type StaffMe = Schemas["StaffMe"];
+export type StaffMember = Schemas["StaffMember"];
+export type StaffRole = Schemas["StaffRole"];
+export type UpdateStaffRequest = Schemas["UpdateStaffRequest"];
+export type Team = Schemas["Team"];
+export type TeamInput = Schemas["TeamInput"];
+export type RoutingRule = Schemas["RoutingRule"];
+export type StaffSettings = Schemas["StaffSettings"];
+export type SavedReply = Schemas["SavedReply"];
+export type SavedReplyInput = Schemas["SavedReplyInput"];
+export type StaffCustomer = Schemas["StaffCustomer"];
+export type StaffCustomerLocation = Schemas["StaffCustomerLocation"];
+export type Attachment = Schemas["Attachment"];
+export type UploadUrl = Schemas["UploadUrl"];
+export type UploadUrlRequest = Schemas["UploadUrlRequest"];
 
 export type InboxTab = NonNullable<NonNullable<operations["listStaffQuotes"]["parameters"]["query"]>["tab"]>;
 
@@ -115,11 +130,34 @@ export function createStaffClient(opts: ClientOptions) {
     decline: (id: string, body: { reason?: string } = {}) => request<StaffQuote>("POST", `${q(id)}/decline`, body),
     listMessages: (id: string, cursor?: string) =>
       request<{ items: StaffMessage[]; nextCursor: string | null }>("GET", `${q(id)}/messages${buildQuery({ cursor })}`),
-    postMessage: (id: string, body: { body: string; internal?: boolean; attachments?: Schemas["Attachment"][] }) =>
+    postMessage: (id: string, body: { body: string; internal?: boolean; attachments?: Attachment[] }) =>
       request<StaffMessage>("POST", `${q(id)}/messages`, body),
     summary: () => request<StaffSummary>("GET", "/s/reports/summary"),
-    /** Escape hatch used by the settings client for endpoints not yet in the contract (see proposed-api.ts). */
-    raw: request,
+    /** No status change; notifies managers. Omit `lineIds` to request approval for every flagged line. */
+    requestFloorApproval: (id: string, body: { lineIds?: string[]; note?: string } = {}) =>
+      request<StaffQuote>("POST", `${q(id)}/request-floor-approval`, body),
+    createAttachmentUpload: (id: string, body: UploadUrlRequest) =>
+      request<UploadUrl>("POST", `${q(id)}/attachments/upload-url`, body),
+    /** Customer search for "create quote on behalf". The server needs at least 2 characters. */
+    searchCustomers: (query: string, limit = 10) =>
+      request<{ items: StaffCustomer[] }>("GET", `/s/customers${buildQuery({ q: query.trim(), limit })}`),
+
+    me: () => request<StaffMe>("GET", "/s/me"),
+    listStaff: (active?: boolean) =>
+      request<{ items: StaffMember[] }>("GET", `/s/staff${buildQuery({ active: active === undefined ? undefined : String(active) })}`),
+    updateStaff: (id: string, patch: UpdateStaffRequest) =>
+      request<StaffMember>("PUT", `/s/staff/${encodeURIComponent(id)}`, patch),
+    listTeams: () => request<{ items: Team[] }>("GET", "/s/teams"),
+    createTeam: (body: TeamInput) => request<Team>("POST", "/s/teams", body),
+    updateTeam: (id: string, body: TeamInput) => request<Team>("PUT", `/s/teams/${encodeURIComponent(id)}`, body),
+    deleteTeam: (id: string) => request<void>("DELETE", `/s/teams/${encodeURIComponent(id)}`),
+    getSettings: () => request<StaffSettings>("GET", "/s/settings"),
+    /** Full replace. Manager or admin only. */
+    putSettings: (body: StaffSettings) => request<StaffSettings>("PUT", "/s/settings", body),
+    listSavedReplies: () => request<{ items: SavedReply[] }>("GET", "/s/saved-replies"),
+    /** Full replace of the caller's replies (and, for managers, the shared ones). */
+    putSavedReplies: (items: SavedReplyInput[]) =>
+      request<{ items: SavedReply[] }>("PUT", "/s/saved-replies", { items }),
   };
 }
 

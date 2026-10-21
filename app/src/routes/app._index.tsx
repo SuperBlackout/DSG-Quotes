@@ -6,17 +6,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClientLoaderFunctionArgs } from "react-router";
 import { useLoaderData, useNavigate, useNavigation, useSearchParams, useRevalidator } from "react-router";
 import { getBrowserClients } from "../lib/browser-client";
-import type { InboxPage, StaffSummary } from "../lib/api-client";
+import type { InboxPage, StaffMember, StaffSummary, Team } from "../lib/api-client";
 import {
   INBOX_TABS,
   formatMoneyWhole,
   formatPct,
   isInboxTab,
+  itemCountLabel,
   tabCount,
   waitingLabel,
 } from "../lib/editor-state";
-import { formatMoney, parseMoney } from "../lib/pricing";
-import { safe, type StaffMember, type Team } from "../lib/proposed-api";
+import { formatMoneyIn, parseMoney } from "../lib/pricing";
+import { CreateQuoteModal } from "../components/CreateQuoteModal";
 import { ErrorBanner, LoadingPage, StatusBadge, WaitingTimer, errorMessage, useNow } from "../components/common";
 
 interface InboxData {
@@ -31,7 +32,7 @@ export const clientLoader = async ({ request }: ClientLoaderFunctionArgs): Promi
   const url = new URL(request.url);
   const tabParam = url.searchParams.get("tab");
   const tab = isInboxTab(tabParam) ? tabParam : "needs_response";
-  const { staff, settings } = getBrowserClients();
+  const { staff } = getBrowserClients();
   const [list, summary, staffList, teamList] = await Promise.all([
     staff
       .listQuotes({
@@ -44,10 +45,10 @@ export const clientLoader = async ({ request }: ClientLoaderFunctionArgs): Promi
       .then((page) => ({ page, error: null as string | null }))
       .catch((e: unknown) => ({ page: null, error: errorMessage(e) })),
     staff.summary().catch(() => null),
-    safe(() => settings.listStaff().then((r) => r.items), [] as StaffMember[]),
-    safe(() => settings.listTeams().then((r) => r.items), [] as Team[]),
+    staff.listStaff(true).then((r) => r.items, () => [] as StaffMember[]),
+    staff.listTeams().then((r) => r.items, () => [] as Team[]),
   ]);
-  return { page: list.page, error: list.error, summary, staff: staffList.data, teams: teamList.data };
+  return { page: list.page, error: list.error, summary, staff: staffList, teams: teamList };
 };
 clientLoader.hydrate = true as const;
 
@@ -235,6 +236,7 @@ export default function Inbox() {
                   <s-stack gap="small-500">
                     <s-text type="strong">{r.companyName ?? r.customerName}</s-text>
                     <s-text color="subdued">{[r.jobName, r.title].filter(Boolean).join(" — ")}</s-text>
+                    <s-text color="subdued">{itemCountLabel(r.itemCount)}</s-text>
                   </s-stack>
                 </s-table-cell>
                 <s-table-cell>
@@ -244,7 +246,7 @@ export default function Inbox() {
                 <s-table-cell>
                   {r.assignedRepName ? <s-text>{r.assignedRepName}</s-text> : <s-badge tone="warning">Unassigned</s-badge>}
                 </s-table-cell>
-                <s-table-cell>{formatMoney(parseMoney(r.total) ?? 0)}</s-table-cell>
+                <s-table-cell>{formatMoneyIn(parseMoney(r.total) ?? 0, r.currencyCode)}</s-table-cell>
                 <s-table-cell>
                   {r.belowFloor ? <s-badge tone="critical">{formatPct(r.marginPct)}</s-badge> : formatPct(r.marginPct)}
                 </s-table-cell>
@@ -267,51 +269,5 @@ export default function Inbox() {
         <ErrorBanner message={moreError} onDismiss={() => setMoreError(null)} />
       </s-section>
     </s-page>
-  );
-}
-
-/** "Create quote for customer": minimal form. See report: a staff customer search endpoint would improve this. */
-function CreateQuoteModal({ onCreated }: { onCreated: (id: string) => void }) {
-  const [customerId, setCustomerId] = useState("");
-  const [title, setTitle] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    setError(null);
-    if (!customerId.trim() || !title.trim()) {
-      setError("Customer ID and a title are required.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const q = await getBrowserClients().staff.createQuote({ customerId: customerId.trim(), title: title.trim(), submit: false });
-      onCreated(q.id);
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <s-modal id="create-quote-modal" heading="Create quote for customer">
-      <s-stack gap="base">
-        <ErrorBanner message={error} />
-        <s-text-field
-          label="Customer ID"
-          details="Shopify customer GID, e.g. gid://shopify/Customer/123"
-          value={customerId}
-          onInput={(e) => setCustomerId(e.currentTarget.value)}
-        />
-        <s-text-field label="Quote title" value={title} onInput={(e) => setTitle(e.currentTarget.value)} />
-      </s-stack>
-      <s-button slot="primary-action" variant="primary" loading={busy} onClick={submit}>
-        Create
-      </s-button>
-      <s-button slot="secondary-actions" commandFor="create-quote-modal" command="--hide">
-        Cancel
-      </s-button>
-    </s-modal>
   );
 }
