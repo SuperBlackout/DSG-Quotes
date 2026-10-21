@@ -492,12 +492,17 @@ paths:
             enum: [needs_response, unassigned, waiting_customer, accepted, expiring, all]
         - name: rep
           in: query
-          schema: { type: string }
+          description: |
+            A staff id, `me` (the signed-in rep) or `unassigned` (no rep and no team).
+          schema: { type: string, example: me }
         - name: team
           in: query
           schema: { type: string }
         - name: q
           in: query
+          description: |
+            Free text over customer, company, job, PO and title. Also matches the display number, with or without
+            the prefix and case-insensitively: `Q-10482`, `q10482` and `10482` all find quote 10482.
           schema: { type: string }
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -598,7 +603,12 @@ paths:
       summary: Freeze working lines into version N+1 and move to QUOTE_READY
       description: |
         Returns 422 FLOOR_APPROVAL_REQUIRED (with `details.lineIds`) if any line is under the rep's
-        price floor and no manager approval exists.
+        price floor, or has unknown cost (`costUnknown`), and no manager approval exists for it. A line with unknown
+        cost can never be margin-checked, so it ALWAYS needs manager approval before send.
+
+        The new version number is `max(currentVersion, highest versions[].versionNo) + 1`
+        (also exposed as `StaffQuote.nextVersionNo`, which the "Send vN" button must use). The same call sets
+        `expiresAt` from the working expiry, else `QUOTE_DEFAULT_EXPIRY_DAYS` (14) from now.
       security: [{ staffSession: [] }]
       parameters: [{ $ref: "#/components/parameters/QuoteId" }]
       responses:
@@ -608,7 +618,8 @@ paths:
     post:
       tags: [staff]
       operationId: approveFloor
-      summary: Manager approval for lines under the price floor
+      summary: Manager approval for lines under the price floor or with unknown cost
+      description: Requires role manager or admin (403 `FORBIDDEN` otherwise). Approving a `costUnknown` line is how it becomes sendable.
       security: [{ staffSession: [] }]
       parameters: [{ $ref: "#/components/parameters/QuoteId" }]
       requestBody:
@@ -699,6 +710,50 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/StaffMessage" }
         default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/request-floor-approval:
+    post:
+      tags: [staff]
+      operationId: requestFloorApproval
+      summary: Ask a manager to approve lines under the price floor (or with unknown cost)
+      description: |
+        No status change. Writes a `FLOOR_APPROVAL_REQUESTED` row to `events` (payload: lineIds, note, requester) and
+        notifies every manager (and the assigned team's manager if any). A manager then calls `approve-floor`.
+        Safe to call again; each call notifies again.
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lineIds:
+                  type: array
+                  items: { type: string }
+                  description: Omit to request approval for every flagged line.
+                note: { type: string, maxLength: 2000 }
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/attachments/upload-url:
+    post:
+      tags: [staff]
+      operationId: createStaffAttachmentUpload
+      summary: Signed upload URL for a staff message attachment
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadUrlRequest" }
+      responses:
+        "200":
+          description: Upload target
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadUrl" }
+        default: { $ref: "#/components/responses/Error" }
   /s/reports/summary:
     get:
       tags: [staff]
@@ -711,6 +766,243 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StaffSummary" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/me:
+    get:
+      tags: [staff]
+      operationId: getStaffMe
+      summary: The signed-in staff member (role, teams, effective price floor)
+      security: [{ staffSession: [] }]
+      responses:
+        "200":
+          description: Current staff member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffMe" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/staff:
+    get:
+      tags: [staff]
+      operationId: listStaff
+      summary: Staff members (reps, managers) for assignment pickers and settings
+      security: [{ staffSession: [] }]
+      parameters:
+        - name: active
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Staff
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StaffMember" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/staff/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [staff]
+      operationId: updateStaffMember
+      summary: Change a staff member's role, teams, personal price floor or active flag (manager or admin only)
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateStaffRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffMember" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/teams:
+    get:
+      tags: [staff]
+      operationId: listTeams
+      summary: Teams
+      security: [{ staffSession: [] }]
+      responses:
+        "200":
+          description: Teams
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Team" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [staff]
+      operationId: createTeam
+      summary: Create a team (manager or admin only)
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/teams/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [staff]
+      operationId: updateTeam
+      summary: Rename a team or replace its members (manager or admin only)
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [staff]
+      operationId: deleteTeam
+      summary: Delete a team (manager or admin only)
+      description: |
+        Quotes assigned to the team keep their rep but lose `teamId`; routing rules that point at the team are
+        removed. A team that is the `defaultTeamId` in settings returns 400 `BAD_REQUEST` until the default is changed.
+      security: [{ staffSession: [] }]
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /s/settings:
+    get:
+      tags: [staff]
+      operationId: getStaffSettings
+      summary: Default price floor and routing rules
+      security: [{ staffSession: [] }]
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffSettings" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      tags: [staff]
+      operationId: putStaffSettings
+      summary: Replace settings (manager or admin only)
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StaffSettings" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffSettings" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/saved-replies:
+    get:
+      tags: [staff]
+      operationId: listSavedReplies
+      summary: Saved replies available to the signed-in staff member (shared plus personal)
+      security: [{ staffSession: [] }]
+      responses:
+        "200":
+          description: Saved replies
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SavedReply" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      tags: [staff]
+      operationId: putSavedReplies
+      summary: Replace the full list of saved replies
+      description: |
+        Replaces the caller's personal replies and, for managers and admins only, the shared ones
+        (`shared: true` items from a rep are rejected with 403 `FORBIDDEN`). Items without `id` are created.
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  maxItems: 100
+                  items: { $ref: "#/components/schemas/SavedReplyInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SavedReply" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/customers:
+    get:
+      tags: [staff]
+      operationId: searchStaffCustomers
+      summary: Find a customer (and company location) to create a quote on their behalf
+      description: Matches name, email, phone and company name. Minimum 2 characters in `q`.
+      security: [{ staffSession: [] }]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 2 }
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Matches
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StaffCustomer" }
         default: { $ref: "#/components/responses/Error" }
 
   # --------------------------------------------------------------- webhooks
@@ -972,7 +1264,9 @@ components:
         currencyCode: { $ref: "#/components/schemas/CurrencyCode" }
         total: { $ref: "#/components/schemas/Money" }
         previousTotal:
-          allOf: [{ $ref: "#/components/schemas/Money" }]
+          type: string
+          pattern: '^-?\d+\.\d{2}$'
+          example: "1234.50"
           nullable: true
           description: Total of the sent version before the current one; null when only one version has been sent.
         expiresAt: { type: string, format: date-time, nullable: true }
@@ -1207,9 +1501,12 @@ components:
         cost: { type: string, nullable: true, pattern: '^-?\d+\.\d{2}$', example: "1234.50" }
         lineTotal: { $ref: "#/components/schemas/Money" }
         marginPct: { type: number, nullable: true, description: "(quotedPrice - cost) / quotedPrice * 100" }
-        belowFloor: { type: boolean }
+        belowFloor: { type: boolean, description: "Under the effective price floor, or cost unknown." }
+        costUnknown:
+          type: boolean
+          description: Cost could not be read from inventory. Margin is null and the line needs manager approval before send.
         floorApproved: { type: boolean }
-        lineNote: { type: string, nullable: true }
+        lineNote: { type: string, nullable: true, description: "Customer-visible note on the line (also shown as `CustomerQuoteLine.lineNote`). There is no per-line internal note; use the quote's internalNote." }
         addedBy: { type: string, enum: [CUSTOMER, STAFF, SYSTEM] }
         position: { type: integer }
     StaffQuoteVersion:
@@ -1247,9 +1544,142 @@ components:
         channel: { type: string, enum: [WEB, EMAIL, SMS] }
         readAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
+    StaffRole:
+      type: string
+      enum: [rep, manager, admin]
+      description: rep = sells and replies; manager = also approves floor exceptions and edits teams/settings; admin = manager plus app install settings.
+    StaffMe:
+      type: object
+      required: [id, name, email, role, teamIds, effectivePriceFloorPct]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/StaffRole" }
+        teamIds:
+          type: array
+          items: { type: string }
+        priceFloorPct:
+          type: number
+          nullable: true
+          description: Personal override; null means use the default from settings.
+        effectivePriceFloorPct:
+          type: number
+          description: Minimum margin percent below which a line needs manager approval (personal override, else the default).
+        canApproveFloor: { type: boolean }
+        canEditSettings: { type: boolean }
+    StaffMember:
+      type: object
+      required: [id, name, email, role, teamIds, active]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/StaffRole" }
+        teamIds:
+          type: array
+          items: { type: string }
+        priceFloorPct: { type: number, nullable: true }
+        active: { type: boolean }
+    UpdateStaffRequest:
+      type: object
+      minProperties: 1
+      properties:
+        role: { $ref: "#/components/schemas/StaffRole" }
+        teamIds:
+          type: array
+          items: { type: string }
+        priceFloorPct: { type: number, nullable: true, minimum: 0, maximum: 100 }
+        active: { type: boolean }
+    Team:
+      type: object
+      required: [id, name, memberIds]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        memberIds:
+          type: array
+          items: { type: string }
+    TeamInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        memberIds:
+          type: array
+          items: { type: string }
+    RoutingRule:
+      type: object
+      required: [companyId]
+      description: Auto-assign new SUBMITTED quotes from this company. Provide repId, teamId or both (rep wins for ownership, team for visibility).
+      properties:
+        id: { type: string }
+        companyId: { type: string, description: "gid://shopify/Company/..." }
+        companyName: { type: string, nullable: true, readOnly: true }
+        repId: { type: string, nullable: true }
+        teamId: { type: string, nullable: true }
+    StaffSettings:
+      type: object
+      required: [defaultPriceFloorPct, routing]
+      properties:
+        defaultPriceFloorPct:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Default minimum margin percent for lines when a rep has no personal floor.
+        routing:
+          type: object
+          required: [autoAssignByCompany, rules]
+          properties:
+            defaultTeamId:
+              type: string
+              nullable: true
+              description: Team that receives quotes no rule matches.
+            autoAssignByCompany:
+              type: boolean
+              description: When true, `rules` are applied on SUBMIT; when false they are stored but ignored.
+            rules:
+              type: array
+              items: { $ref: "#/components/schemas/RoutingRule" }
+    SavedReply:
+      type: object
+      required: [id, title, body, shared]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        body: { type: string }
+        shared: { type: boolean, description: "true = visible to all staff (managed by managers)." }
+    SavedReplyInput:
+      type: object
+      required: [title, body]
+      properties:
+        id: { type: string }
+        title: { type: string, minLength: 1, maxLength: 80 }
+        body: { type: string, minLength: 1, maxLength: 5000 }
+        shared: { type: boolean, default: false }
+    StaffCustomerLocation:
+      type: object
+      required: [companyLocationId, name]
+      properties:
+        companyLocationId: { type: string }
+        name: { type: string }
+        shipTo: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/Address" }] }
+    StaffCustomer:
+      type: object
+      required: [customerId, name, email]
+      properties:
+        customerId: { type: string, description: "gid://shopify/Customer/..." }
+        name: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string, nullable: true }
+        companyId: { type: string, nullable: true }
+        companyName: { type: string, nullable: true }
+        locations:
+          type: array
+          items: { $ref: "#/components/schemas/StaffCustomerLocation" }
     StaffQuoteSummary:
       type: object
-      required: [id, number, title, status, waitingOn, customerName, total, updatedAt]
+      required: [id, number, title, status, waitingOn, customerName, currencyCode, itemCount, total, updatedAt]
       properties:
         id: { type: string }
         number: { type: integer }
@@ -1265,9 +1695,11 @@ components:
         assignedRepName: { type: string, nullable: true }
         teamId: { type: string, nullable: true }
         currentVersion: { type: integer }
+        itemCount: { type: integer, minimum: 0, description: "Number of line items (lines, not units) shown in inbox rows." }
+        currencyCode: { $ref: "#/components/schemas/CurrencyCode" }
         total: { $ref: "#/components/schemas/Money" }
         marginPct: { type: number, nullable: true }
-        belowFloor: { type: boolean }
+        belowFloor: { type: boolean, description: "true if any line is under the floor or has unknown cost and is not yet approved." }
         expiresAt: { type: string, format: date-time, nullable: true }
         updatedAt: { type: string, format: date-time }
     StaffQuoteEvent:
@@ -1287,6 +1719,13 @@ components:
           required: [workingLines, versions, messages]
           properties:
             customerId: { type: string }
+            customerContactName: { type: string, nullable: true }
+            customerContactPhone: { type: string, nullable: true }
+            paymentTerms: { type: string, nullable: true, example: Net 30, description: "Company payment terms from Shopify, read only." }
+            nextVersionNo:
+              type: integer
+              readOnly: true
+              description: max(currentVersion, highest versions[].versionNo) + 1; the N in "Send vN".
             companyId: { type: string, nullable: true }
             companyLocationId: { type: string, nullable: true }
             job: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/JobRef" }] }
@@ -1308,8 +1747,13 @@ components:
               description: Editable working revision (what Save draft stores).
               items: { $ref: "#/components/schemas/StaffQuoteLine" }
             workingFreight: { $ref: "#/components/schemas/Money" }
-            workingRepNote: { type: string, nullable: true }
-            workingInternalNote: { type: string, nullable: true }
+            workingExpiresAt:
+              type: string
+              format: date-time
+              nullable: true
+              description: Expiry saved with the working revision; becomes `expiresAt` when the revision is sent.
+            workingRepNote: { type: string, nullable: true, description: "Customer-visible job notes (becomes `repNote` on send)." }
+            workingInternalNote: { type: string, nullable: true, description: "Staff only; never copied to a customer shape." }
             versions:
               type: array
               items: { $ref: "#/components/schemas/StaffQuoteVersion" }
@@ -1322,6 +1766,7 @@ components:
     StaffCreateQuoteRequest:
       type: object
       required: [customerId, title]
+      description: Use `GET /s/customers?q=` to find `customerId` and `companyLocationId`.
       properties:
         customerId: { type: string }
         companyLocationId: { type: string }
@@ -1337,6 +1782,12 @@ components:
     StaffLineInput:
       type: object
       required: [variantId, qty, quotedPrice]
+      description: |
+        There is no variant price/cost lookup endpoint (decision: cost never needs to reach the client before a save).
+        When a line without `id` is saved through `PUT /s/quotes/{id}/draft-revision`, the server snapshots the buyer's
+        contextual `listPrice` and the inventory unit `cost` for that `variantId` (rule 6) and returns them, with
+        `marginPct`, `belowFloor` and `costUnknown`, on the updated `workingLines`. The admin app therefore saves right
+        after the resource picker adds a product and renders cost and margin from the response.
       properties:
         id: { type: string, description: "Existing working line id; omit for a new line." }
         variantId: { type: string }
@@ -1356,8 +1807,20 @@ components:
         internalNote: { type: string, nullable: true, description: Staff only. }
     StaffSummary:
       type: object
-      required: [needsResponse, openValue, acceptedThisWeek, expiringSoon]
+      required: [needsResponse, openValue, acceptedThisWeek, expiringSoon, tabCounts]
       properties:
+        tabCounts:
+          type: object
+          description: Badge counts for the inbox tabs, same filters as `GET /s/quotes?tab=`.
+          required: [needs_response, unassigned, waiting_customer, accepted, expiring, all]
+          additionalProperties: false
+          properties:
+            needs_response: { type: integer }
+            unassigned: { type: integer }
+            waiting_customer: { type: integer }
+            accepted: { type: integer }
+            expiring: { type: integer }
+            all: { type: integer }
         needsResponse: { type: integer }
         unassigned: { type: integer }
         openValue: { $ref: "#/components/schemas/Money" }
