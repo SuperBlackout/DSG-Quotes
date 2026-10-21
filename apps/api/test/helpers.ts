@@ -106,7 +106,8 @@ export interface Res {
 
 const TABLES = [
   "Event", "Message", "QuoteLine", "QuoteVersion", "Quote", "Job", "NotificationPref", "CustomerProfile",
-  "ActiveQuote", "Counter", "WebhookReceipt", "Staff", "Session",
+  "ActiveQuote", "Counter", "WebhookReceipt", "Staff", "Session", "Team", "TeamMember", "ShopSetting", "RoutingRule",
+  "SavedReply", "NotificationLog", "SmsOptOut",
 ];
 
 /** Call inside a describe(): sets up an app on the test DB, wipes tables before each test. */
@@ -189,11 +190,21 @@ export function useHarness(): Harness {
 
 // ---------------------------------------------------------------- scenario helpers
 /** Staff members used across tests; created lazily by the first authenticated call, then promoted. */
-export async function ensureStaff(h: Harness, userId: string, patch: { isManager?: boolean; name?: string; priceFloorPct?: number } = {}) {
+export async function ensureStaff(
+  h: Harness,
+  userId: string,
+  patch: { isManager?: boolean; role?: "rep" | "manager" | "admin"; name?: string; priceFloorPct?: number | null; active?: boolean } = {},
+) {
   await h.asStaff(userId).get("/s/reports/summary"); // auto-provisions the Staff row
   return h.prisma.staff.update({
     where: { shop_shopifyStaffId: { shop: SHOP, shopifyStaffId: userId } },
-    data: { name: patch.name ?? `Staff ${userId}`, isManager: patch.isManager, ...(patch.priceFloorPct !== undefined ? { priceFloorPct: patch.priceFloorPct } : {}) },
+    // The first staff member in a shop is auto-promoted to admin (bootstrap), so the role is always set explicitly here.
+    data: {
+      name: patch.name ?? `Staff ${userId}`,
+      role: patch.role ?? (patch.isManager ? "manager" : "rep"),
+      ...(patch.active !== undefined ? { active: patch.active } : {}),
+      ...(patch.priceFloorPct !== undefined ? { priceFloorPct: patch.priceFloorPct } : {}),
+    },
   });
 }
 

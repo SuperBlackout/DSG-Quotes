@@ -104,18 +104,56 @@ describe("auth middleware", () => {
     expect(r.body).toEqual({ ok: true });
   });
 
-  it("CORS: customer routes answer preflight and allow the Authorization header; staff routes do not", async () => {
-    const pre = await h.raw({ method: "OPTIONS", url: "/c/quotes/abc/submit", headers: { origin: "https://extensions.shopifycdn.com", "access-control-request-method": "POST", "access-control-request-headers": "authorization,content-type" } });
-    expect(pre.status).toBe(204);
-    expect(pre.headers["access-control-allow-origin"]).toBe("*");
-    expect(pre.headers["access-control-allow-headers"]).toContain("authorization");
-    const real = await h.c.get("/c/quotes");
-    expect(real.headers["access-control-allow-origin"]).toBe("*");
-    const err = await h.raw({ method: "GET", url: "/c/quotes" });
+  it("CORS (contract x-cors): echoes the Origin including the literal null, answers any /c/* preflight with an unauthenticated 204, no credentials header", async () => {
+    for (const origin of ["https://extensions.shopifycdn.com", "null", "https://dsg.direct"]) {
+      const pre = await h.raw({ method: "OPTIONS", url: "/c/quotes/abc/submit", headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "authorization,content-type" } });
+      expect(pre.status).toBe(204);
+      expect(pre.headers["access-control-allow-origin"]).toBe(origin);
+      expect(pre.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type");
+      expect(pre.headers["access-control-allow-methods"]).toBe("GET, POST, PUT, PATCH, DELETE, OPTIONS");
+      expect(pre.headers["access-control-max-age"]).toBe("600");
+      expect(pre.headers["access-control-allow-credentials"]).toBeUndefined();
+      expect(pre.headers["vary"]).toContain("Origin");
+    }
+    // Every /c/* path, even ones that do not exist, is preflighted without authentication.
+    for (const url of ["/c/quotes", "/c/quotes/from-cart", "/c/quotes/x/lines/y", "/c/notification-prefs", "/c/active-quote", "/c/quotes/x/pdf"]) {
+      expect((await h.raw({ method: "OPTIONS", url, headers: { origin: "null" } })).status, url).toBe(204);
+    }
+    const real = await h.raw({ method: "GET", url: "/c/quotes", headers: { origin: "null", authorization: `Bearer ${customerToken(CUSTOMER_A, h.clock.now)}` } });
+    expect(real.status).toBe(200);
+    expect(real.headers["access-control-allow-origin"]).toBe("null");
+    const err = await h.raw({ method: "GET", url: "/c/quotes", headers: { origin: "https://extensions.shopifycdn.com" } });
     expect(err.status).toBe(401);
-    expect(err.headers["access-control-allow-origin"]).toBe("*"); // so the extension can read the 401 body
+    expect(err.headers["access-control-allow-origin"]).toBe("https://extensions.shopifycdn.com"); // so the extension can read the 401 body
+    // No Origin header (server to server): nothing to echo.
+    expect((await h.c.get("/c/quotes")).headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("CORS: no CORS headers on /s/*, /hooks/* or the app proxy mount, and their OPTIONS requests are not blanket-allowed", async () => {
     const staff = await h.s.get("/s/reports/summary");
     expect(staff.headers["access-control-allow-origin"]).toBeUndefined();
+    for (const url of ["/s/quotes", "/api/s/quotes", "/hooks/email-inbound", "/hooks/twilio-inbound", "/proxy/c/quotes", "/webhooks/shopify"]) {
+      const r = await h.raw({ method: "OPTIONS", url, headers: { origin: "https://evil.example", "access-control-request-method": "GET" } });
+      expect(r.headers["access-control-allow-origin"], url).toBeUndefined();
+      expect(r.headers["access-control-allow-methods"], url).toBeUndefined();
+      expect(r.status, url).not.toBe(204);
+    }
+    const asStaffWithOrigin = await h.raw({ method: "GET", url: "/s/reports/summary", headers: { origin: "https://evil.example", authorization: `Bearer ${staffToken(STAFF_REP, h.clock.now)}` } });
+    expect(asStaffWithOrigin.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("absolute origin vs app proxy: /c takes the session token only, /proxy/c takes the HMAC signature only", async () => {
+    const sig = signAppProxyQuery({ shop: SHOP, logged_in_customer_id: "1001" }, SECRET, h.clock.now);
+    // A valid app proxy signature does NOT open the absolute-origin route (it has no meaning there).
+    const viaSig = await h.raw({ method: "GET", url: `/c/active-quote?${sig}` });
+    expect(viaSig.status).toBe(401);
+    expect(viaSig.body.message).toMatch(/missing credentials/i);
+    // ...and a bearer token does not open the proxy mount.
+    const viaToken = await h.raw({ method: "GET", url: "/proxy/c/active-quote", headers: bearer(customerToken(CUSTOMER_A, h.clock.now)) });
+    expect(viaToken.status).toBe(401);
+    expect(viaToken.body.message).toMatch(/signature/i);
+    expect((await h.raw({ method: "GET", url: "/c/active-quote", headers: bearer(customerToken(CUSTOMER_A, h.clock.now)) })).status).toBe(200);
+    expect((await h.raw({ method: "GET", url: `/proxy/c/active-quote?${sig}` })).status).toBe(200);
   });
 
   it("unknown routes return the contract error shape", async () => {
@@ -198,10 +236,21 @@ describe("auth middleware", () => {
     const r = await h.raw({ method: "GET", url: "/api/s/reports/summary", headers: bearer(staffToken("7777", h.clock.now)) });
     expect(r.status).toBe(200);
     const row = await h.prisma.staff.findFirstOrThrow({ where: { shopifyStaffId: "7777" } });
-    expect(row).toMatchObject({ isManager: false });
-    expect(row.priceFloorPct.toString()).toBe("15");
+    // Bootstrap: the first staff member in a shop becomes its admin, so someone can promote the rest in Settings.
+    expect(row).toMatchObject({ role: "admin", active: true, priceFloorPct: null });
     await h.raw({ method: "GET", url: "/s/reports/summary", headers: bearer(staffToken("7777", h.clock.now)) });
     expect(await h.prisma.staff.count({ where: { shopifyStaffId: "7777" } })).toBe(1);
+    // Everyone after that starts as a rep with no personal floor (the shop default applies).
+    await h.raw({ method: "GET", url: "/s/reports/summary", headers: bearer(staffToken("7778", h.clock.now)) });
+    expect(await h.prisma.staff.findFirstOrThrow({ where: { shopifyStaffId: "7778" } })).toMatchObject({ role: "rep", priceFloorPct: null });
+  });
+
+  it("a deactivated staff member is refused (403) on every /s route", async () => {
+    await h.raw({ method: "GET", url: "/s/reports/summary", headers: bearer(staffToken("7779", h.clock.now)) });
+    await h.prisma.staff.update({ where: { shop_shopifyStaffId: { shop: SHOP, shopifyStaffId: "7779" } }, data: { active: false } });
+    const r = await h.raw({ method: "GET", url: "/s/quotes", headers: bearer(staffToken("7779", h.clock.now)) });
+    expect(r.status).toBe(403);
+    expect(r.body.code).toBe("FORBIDDEN");
   });
 
   it("an expired session token is rejected", async () => {

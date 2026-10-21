@@ -180,7 +180,8 @@ describe("staff quotes", () => {
       expect(r.body.workingLines).toHaveLength(2);
       expect(r.body.workingLines[0]).toMatchObject({ id: line.id, qty: 4, quotedPrice: "45.00", lineTotal: "180.00", lineNote: "volume price", marginPct: 55.56 });
       expect(r.body.workingLines[1]).toMatchObject({ qty: 10, quotedPrice: "9.50", listPrice: "10.00", cost: null, addedBy: "STAFF" });
-      expect(r.body).toMatchObject({ workingFreight: "25.00", workingRepNote: "Prices good for 30 days", workingInternalNote: "Margin is fine, customer is big", expiresAt });
+      // The working expiry is its own field; `expiresAt` stays null until a version is sent.
+      expect(r.body).toMatchObject({ workingFreight: "25.00", workingRepNote: "Prices good for 30 days", workingInternalNote: "Margin is fine, customer is big", workingExpiresAt: expiresAt, expiresAt: null });
 
       // Customer still sees ONLY their original request.
       const cust = (await h.c.get(`/c/quotes/${q.id}`)).body;
@@ -345,19 +346,79 @@ describe("staff quotes", () => {
       expect((await h.s.post(`/s/quotes/${q.id}/send`)).status).toBe(200);
     });
 
-    it("lines at or above the floor and lines with unknown cost do not block", async () => {
+    it("a line exactly on the floor does not block", async () => {
       await ensureStaff(h, STAFF_REP, { priceFloorPct: 15 });
-      const q = await submitted(h, [{ variantId: V_GOOD, qty: 1 }, { variantId: V_NOCOST, qty: 1 }]);
+      const q = await submitted(h, [{ variantId: V_GOOD, qty: 1 }]);
       const lines = (await h.s.get(`/s/quotes/${q.id}`)).body.workingLines;
-      const price = (id: string) => lines.find((l: any) => l.variantId === id);
       // 23.53 on cost 20.00 = 15.0% margin: exactly on the floor is allowed (strictly below blocks).
-      await h.s.put(`/s/quotes/${q.id}/draft-revision`, {
-        lines: [
-          { id: price(V_GOOD).id, variantId: V_GOOD, qty: 1, quotedPrice: "23.53" },
-          { id: price(V_NOCOST).id, variantId: V_NOCOST, qty: 1, quotedPrice: "0.01" },
-        ],
-      });
+      const saved = await h.s.put(`/s/quotes/${q.id}/draft-revision`, { lines: [{ id: lines[0].id, variantId: V_GOOD, qty: 1, quotedPrice: "23.53" }] });
+      expect(saved.body.workingLines[0]).toMatchObject({ belowFloor: false, costUnknown: false });
       expect((await h.s.post(`/s/quotes/${q.id}/send`)).status).toBe(200);
+    });
+
+    describe("unknown cost (costUnknown) always needs manager approval", () => {
+      async function unknownCostQuote() {
+        await ensureStaff(h, STAFF_REP, { priceFloorPct: 0 }); // even a 0% floor cannot clear a line whose cost is unknown
+        await ensureStaff(h, STAFF_MANAGER, { isManager: true });
+        const q = await submitted(h, [{ variantId: V_GOOD, qty: 1 }, { variantId: V_NOCOST, qty: 1 }]);
+        const claimed = await h.s.post(`/s/quotes/${q.id}/claim`);
+        const line = claimed.body.workingLines.find((l: any) => l.variantId === V_NOCOST);
+        return { q, line, good: claimed.body.workingLines.find((l: any) => l.variantId === V_GOOD) };
+      }
+
+      it("the line is flagged: costUnknown, marginPct null, belowFloor true; the quote row is belowFloor", async () => {
+        const { q, line, good } = await unknownCostQuote();
+        expect(line).toMatchObject({ cost: null, costUnknown: true, marginPct: null, belowFloor: true, floorApproved: false });
+        expect(good).toMatchObject({ costUnknown: false, belowFloor: false });
+        const row = (await h.s.get("/s/quotes")).body.items.find((i: any) => i.id === q.id);
+        expect(row.belowFloor).toBe(true);
+      });
+
+      it("send returns 422 FLOOR_APPROVAL_REQUIRED with the line ids until a manager approves; then it sends", async () => {
+        const { q, line } = await unknownCostQuote();
+        const blocked = await h.s.post(`/s/quotes/${q.id}/send`);
+        expect(blocked.status).toBe(422);
+        expect(blocked.body).toMatchObject({ code: "FLOOR_APPROVAL_REQUIRED", details: { lineIds: [line.id], costUnknownLineIds: [line.id] } });
+        expect(await h.prisma.quoteVersion.count({ where: { quoteId: q.id } })).toBe(0);
+
+        expect((await h.s.post(`/s/quotes/${q.id}/approve-floor`, {})).status).toBe(403); // a rep cannot approve
+        const approved = await h.asStaff(STAFF_MANAGER).post(`/s/quotes/${q.id}/approve-floor`, { lineIds: [line.id] });
+        expect(approved.status).toBe(200);
+        expect(approved.body.workingLines.find((l: any) => l.id === line.id)).toMatchObject({ costUnknown: true, floorApproved: true });
+        expect(approved.body.belowFloor).toBe(false);
+        expect((await h.s.post(`/s/quotes/${q.id}/send`)).status).toBe(200);
+      });
+
+      it("editing the price or quantity of an approved unknown-cost line needs a fresh approval", async () => {
+        const { q, line, good } = await unknownCostQuote();
+        const mgr = h.asStaff(STAFF_MANAGER);
+        await mgr.post(`/s/quotes/${q.id}/approve-floor`, {});
+        await h.s.put(`/s/quotes/${q.id}/draft-revision`, {
+          lines: [
+            { id: good.id, variantId: V_GOOD, qty: 1, quotedPrice: "50.00" },
+            { id: line.id, variantId: V_NOCOST, qty: 2, quotedPrice: "10.00" },
+          ],
+        });
+        expect((await h.s.post(`/s/quotes/${q.id}/send`)).status).toBe(422);
+        await mgr.post(`/s/quotes/${q.id}/approve-floor`, {});
+        expect((await h.s.post(`/s/quotes/${q.id}/send`)).status).toBe(200);
+      });
+
+      it("a product added through draft-revision without a stored cost is flagged in the response too", async () => {
+        const { q } = await unknownCostQuote();
+        const added = await h.s.put(`/s/quotes/${q.id}/draft-revision`, { lines: [{ variantId: V_NOCOST, qty: 3, quotedPrice: "9.00" }] });
+        expect(added.status).toBe(200);
+        expect(added.body.workingLines).toHaveLength(1);
+        expect(added.body.workingLines[0]).toMatchObject({ listPrice: "10.00", cost: null, costUnknown: true, marginPct: null, belowFloor: true });
+      });
+
+      it("the customer never sees costUnknown, cost or any approval flag", async () => {
+        const { q } = await unknownCostQuote();
+        await h.asStaff(STAFF_MANAGER).post(`/s/quotes/${q.id}/approve-floor`, {});
+        await h.s.post(`/s/quotes/${q.id}/send`);
+        const cust = JSON.stringify((await h.c.get(`/c/quotes/${q.id}`)).body);
+        for (const k of ["costUnknown", "floorApproved", "belowFloor", "marginPct", '"cost"']) expect(cust).not.toContain(k);
+      });
     });
   });
 

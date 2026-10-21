@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CUSTOMER_A, LOC1, V_COSTLY, V_GOOD, V_NOCOST, draftWith, eventsOf, sent, submitted, useHarness } from "./helpers";
+import { CUSTOMER_A, CUSTOMER_B, LOC1, V_COSTLY, V_GOOD, V_NOCOST, draftWith, eventsOf, sent, submitted, useHarness } from "./helpers";
 
 describe("customer quotes", () => {
   const h = useHarness();
@@ -407,14 +407,21 @@ describe("customer quotes", () => {
   });
 
   describe("notification prefs", () => {
-    it("GET returns defaults, PUT stores the matrix and consent, GET reads it back", async () => {
+    const KEYS = ["QUOTE_RECEIVED", "QUOTE_READY", "NEW_MESSAGE", "EXPIRING", "ORDERED", "ACCEPTED", "WEEKLY_SUMMARY"];
+    /** All seven keys are required on PUT; start from email-on/sms-off and override. */
+    const events = (over: Record<string, { email: boolean; sms: boolean }> = {}) =>
+      Object.fromEntries(KEYS.map((k) => [k, over[k] ?? { email: true, sms: false }]));
+
+    it("GET returns defaults for exactly the seven event keys, PUT stores the matrix and consent, GET reads it back", async () => {
       const def = await h.c.get("/c/notification-prefs");
       expect(def.status).toBe(200);
+      expect(Object.keys(def.body.events).sort()).toEqual([...KEYS].sort());
       expect(def.body.events.QUOTE_READY).toEqual({ email: true, sms: false });
-      expect(def.body).toMatchObject({ smsOptIn: false, email: "dana@example.test", timezone: "America/New_York" });
+      expect(def.body.events.WEEKLY_SUMMARY).toEqual({ email: true, sms: false });
+      expect(def.body).toMatchObject({ smsOptIn: false, email: "dana@example.test", timezone: "America/New_York", watchers: [] });
 
       const put = await h.c.put("/c/notification-prefs", {
-        events: { QUOTE_READY: { email: true, sms: true }, NEW_MESSAGE: { email: false, sms: true }, ORDERED: { email: true, sms: false } },
+        events: events({ QUOTE_READY: { email: true, sms: true }, NEW_MESSAGE: { email: false, sms: true }, ORDERED: { email: true, sms: false } }),
         email: "dana.alt@example.test",
         phone: "+13125550123",
         smsOptIn: true,
@@ -422,7 +429,7 @@ describe("customer quotes", () => {
         quietStart: "19:00",
         quietEnd: "07:00",
         timezone: "America/Chicago",
-        watchers: ["boss@example.test"],
+        watchers: [{ email: "Boss@Example.test", name: "Bo Boss", role: "Project manager", scope: "all", channels: { email: true, sms: false } }],
       });
       expect(put.status).toBe(200);
       expect(put.body).toMatchObject({
@@ -432,10 +439,11 @@ describe("customer quotes", () => {
         quietStart: "19:00",
         timezone: "America/Chicago",
         email: "dana.alt@example.test",
-        watchers: ["boss@example.test"],
+        watchers: [{ email: "boss@example.test", name: "Bo Boss", role: "Project manager", scope: "all", channels: { email: true, sms: false } }],
       });
       expect(put.body.smsOptInAt).toBe(h.clock.now.toISOString());
       expect(put.body.events.NEW_MESSAGE).toEqual({ email: false, sms: true });
+      expect(Object.keys(put.body.events).sort()).toEqual([...KEYS].sort());
 
       // Re-saving keeps the ORIGINAL consent timestamp and wording.
       h.clock.now = new Date("2026-03-09T10:00:00.000Z");
@@ -444,12 +452,61 @@ describe("customer quotes", () => {
       expect(again.body.smsConsentText).toBe("I agree to receive texts from DSG about my quotes.");
 
       // Opting out clears consent and turns every SMS flag off.
-      const out = await h.c.put("/c/notification-prefs", { events: { QUOTE_READY: { email: true, sms: false } }, email: "dana.alt@example.test", smsOptIn: false });
+      const out = await h.c.put("/c/notification-prefs", { events: events(), email: "dana.alt@example.test", smsOptIn: false });
       expect(out.body).toMatchObject({ smsOptIn: false, smsOptInAt: null });
+      expect(out.body.watchers).toHaveLength(1); // watchers are untouched when omitted
+    });
+
+    it("PUT requires all seven keys and rejects unknown ones (CHANGES_REQUESTED is staff-only and gone)", async () => {
+      const base = { email: "d@example.test" };
+      const missing = events();
+      delete (missing as any).WEEKLY_SUMMARY;
+      const r1 = await h.c.put("/c/notification-prefs", { ...base, events: missing });
+      expect(r1.status).toBe(400);
+      expect(JSON.stringify(r1.body)).toContain("WEEKLY_SUMMARY");
+      expect((await h.c.put("/c/notification-prefs", { ...base, events: { QUOTE_READY: { email: true, sms: false } } })).status).toBe(400);
+      expect((await h.c.put("/c/notification-prefs", { ...base, events: { ...events(), CHANGES_REQUESTED: { email: true, sms: false } } })).status).toBe(400);
+      expect((await h.c.put("/c/notification-prefs", { ...base, events: { ...events(), SOMETHING_ELSE: { email: true, sms: false } } })).status).toBe(400);
+      expect((await h.c.put("/c/notification-prefs", { ...base, events: { ...events(), QUOTE_READY: { email: true } } })).status).toBe(400);
+      expect(await h.prisma.notificationPref.count()).toBe(0); // nothing was stored by the refused requests
+    });
+
+    it("rows saved before 0.2.0 (old key set, string watchers) read back as the new shape", async () => {
+      const shop = h.deps.config.shopDomain;
+      await h.prisma.notificationPref.createMany({
+        data: ["QUOTE_READY", "NEW_MESSAGE", "CHANGES_REQUESTED", "ACCEPTED", "ORDERED", "EXPIRING"].map((event) => ({ shop, customerId: CUSTOMER_A, event, email: event !== "NEW_MESSAGE", sms: false })),
+      });
+      await h.prisma.customerProfile.create({ data: { shop, customerId: CUSTOMER_A, email: "dana@example.test", watchers: ["old.watcher@example.test"] } });
+      const r = await h.c.get("/c/notification-prefs");
+      expect(r.status).toBe(200);
+      expect(Object.keys(r.body.events).sort()).toEqual([...KEYS].sort());
+      expect(r.body.events.NEW_MESSAGE).toEqual({ email: false, sms: false });
+      expect(r.body.events.QUOTE_RECEIVED).toEqual({ email: true, sms: false }); // new keys default on
+      expect(r.body.watchers).toEqual([{ email: "old.watcher@example.test", name: null, role: null, scope: "all", channels: { email: true, sms: false } }]);
+    });
+
+    it("watcher scope is 'all' or a job of the caller's own company", async () => {
+      const q = await draftWith(h);
+      const jobId = q.job.id;
+      const watcher = (scope: string) => ({ email: "w@example.test", scope, channels: { email: true, sms: false } });
+      const ok = await h.c.put("/c/notification-prefs", { events: events(), email: "d@example.test", watchers: [watcher("all"), watcher(jobId)] });
+      expect(ok.status).toBe(200);
+      expect(ok.body.watchers.map((w: any) => w.scope)).toEqual(["all", jobId]);
+      // Another company's job, and a made-up id, are refused with 422.
+      const theirs = await draftWith(h, [{ variantId: V_GOOD, qty: 1 }], h.asCustomer(CUSTOMER_B));
+      const bad = await h.c.put("/c/notification-prefs", { events: events(), email: "d@example.test", watchers: [watcher(theirs.job.id)] });
+      expect(bad.status).toBe(422);
+      expect(bad.body.code).toBe("VALIDATION_FAILED");
+      expect((await h.c.put("/c/notification-prefs", { events: events(), email: "d@example.test", watchers: [watcher("no-such-job")] })).status).toBe(422);
+      // Malformed watchers are a 400.
+      expect((await h.c.put("/c/notification-prefs", { events: events(), email: "d@example.test", watchers: ["plain@example.test"] })).status).toBe(400);
+      expect((await h.c.put("/c/notification-prefs", { events: events(), email: "d@example.test", watchers: [{ ...watcher("all"), channels: { email: true } }] })).status).toBe(400);
+      // Stored watchers are unchanged by the refused requests.
+      expect((await h.c.get("/c/notification-prefs")).body.watchers).toHaveLength(2);
     });
 
     it("rejects SMS without opt-in, without a valid phone, or without consent text", async () => {
-      const base = { events: { QUOTE_READY: { email: true, sms: true } }, email: "d@example.test" };
+      const base = { events: events({ QUOTE_READY: { email: true, sms: true } }), email: "d@example.test" };
       expect((await h.c.put("/c/notification-prefs", base)).status).toBe(422);
       expect((await h.c.put("/c/notification-prefs", { ...base, smsOptIn: true, smsConsentText: "ok", phone: "312-555" })).status).toBe(422);
       expect((await h.c.put("/c/notification-prefs", { ...base, smsOptIn: true, phone: "+13125550123" })).status).toBe(422);

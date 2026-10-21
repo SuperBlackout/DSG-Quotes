@@ -59,7 +59,8 @@ export async function webhookRoutes(app: FastifyInstance) {
           return "ignored";
       }
     });
-    return reply.status(200).send({ ok: true, result });
+    // The contract documents a bare 200 (no body); the outcome is exposed as a header for logs and tests.
+    return reply.status(200).header("x-webhook-result", result).send();
   });
 }
 

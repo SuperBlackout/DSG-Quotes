@@ -51,7 +51,7 @@ export async function seed(prisma: PrismaClient, config: Config, opts: { reset?:
   if (config.nodeEnv === "production") throw new Error("Refusing to seed a production database");
   if (opts.reset) {
     await prisma.$executeRawUnsafe(
-      `TRUNCATE "Event","Message","QuoteLine","QuoteVersion","Quote","Job","NotificationPref","CustomerProfile","ActiveQuote","Counter","WebhookReceipt","Staff" RESTART IDENTITY CASCADE`,
+      `TRUNCATE "Event","Message","QuoteLine","QuoteVersion","Quote","Job","NotificationPref","CustomerProfile","ActiveQuote","Counter","WebhookReceipt","Staff","Team","TeamMember","ShopSetting","RoutingRule","SavedReply","NotificationLog","SmsOptOut" RESTART IDENTITY CASCADE`,
     );
   } else if ((await prisma.quote.count()) > 0) {
     throw new Error("Database already has quotes; re-run with --reset to wipe and reseed");
@@ -84,11 +84,11 @@ export async function seed(prisma: PrismaClient, config: Config, opts: { reset?:
   const sam = call("9502");
   const morgan = call("9503");
   for (const who of [riley, sam, morgan]) await who("GET", "/s/reports/summary");
-  const setStaff = (id: string, data: { name: string; email: string; isManager?: boolean; priceFloorPct?: number }) =>
+  const setStaff = (id: string, data: { name: string; email: string; role?: "rep" | "manager" | "admin"; priceFloorPct?: number }) =>
     prisma.staff.update({ where: { shop_shopifyStaffId: { shop: config.shopDomain, shopifyStaffId: id } }, data });
-  await setStaff("9501", { name: "Riley Rep", email: "riley@dsg.example.test" });
-  await setStaff("9502", { name: "Sam Sales", email: "sam.sales@dsg.example.test", priceFloorPct: 12 });
-  await setStaff("9503", { name: "Morgan Manager", email: "morgan@dsg.example.test", isManager: true, priceFloorPct: 5 });
+  await setStaff("9501", { name: "Riley Rep", email: "riley@dsg.example.test", role: "rep" });
+  await setStaff("9502", { name: "Sam Sales", email: "sam.sales@dsg.example.test", role: "rep", priceFloorPct: 12 });
+  await setStaff("9503", { name: "Morgan Manager", email: "morgan@dsg.example.test", role: "manager", priceFloorPct: 5 });
 
   const out: SeedResult["quotes"] = [];
   const track = (q: { id: string; number: number; status: string }) => out.push({ id: q.id, number: q.number, status: q.status });
@@ -123,6 +123,7 @@ export async function seed(prisma: PrismaClient, config: Config, opts: { reset?:
   const declinedId = await newQuote(lakeside, "Cabinet hardware refresh", "Harbor cafe", "PO-DECL-2", [[PULL, 20], [HINGE, 10]]);
   await lakeside("POST", `/c/quotes/${declinedId}/submit`, {});
   await sam("POST", `/s/quotes/${declinedId}/claim`);
+  await morgan("POST", `/s/quotes/${declinedId}/approve-floor`, {}); // the cabinet pull has no cost on file: a manager approves it
   await sam("POST", `/s/quotes/${declinedId}/send`);
   await lakeside("POST", `/c/quotes/${declinedId}/decline`, { reason: "Found a closeout price elsewhere" });
   track(await lakeside("GET", `/c/quotes/${declinedId}`));
@@ -186,6 +187,7 @@ export async function seed(prisma: PrismaClient, config: Config, opts: { reset?:
   const changesId = await newQuote(lakeside, "Pulls and hinges", "Harbor cafe", "PO-HC-24", [[PULL, 40], [HINGE, 40]]);
   await lakeside("POST", `/c/quotes/${changesId}/submit`, {});
   await sam("POST", `/s/quotes/${changesId}/claim`);
+  await morgan("POST", `/s/quotes/${changesId}/approve-floor`, {});
   await sam("POST", `/s/quotes/${changesId}/send`);
   await lakeside("POST", `/c/quotes/${changesId}/request-changes`, { message: "Please add 10 more pulls and split the shipment." });
   track(await lakeside("GET", `/c/quotes/${changesId}`));

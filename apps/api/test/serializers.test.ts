@@ -126,7 +126,7 @@ describe("customer serializer privacy (CLAUDE.md rules 4 and 5)", () => {
       id: "q1", shop: "s", number: 10001, title: "Q", status: "QUOTE_READY", currentVersion: 1, customerName: "C", customerEmail: "x@y.z", expiresAt: null, total: D("18"), lineCount: 1,
       marginPct: D("12"), belowFloor: true, workingInternalNote: "SECRET-INTERNAL-NOTE", workingFreight: D("5"), job: null, updatedAt: now, orderId: null, poNumber: null, neededBy: null, shipToAddress: null, notesToSales: null, watchers: [],
     };
-    const full = customerQuote({ quote, rep: { name: "Rita" }, lines: [line], versions: [version], messages: msgs }, now);
+    const full = customerQuote({ quote, extras: { assignedRepName: "Rita", unreadCount: 0, previousTotal: null }, lines: [line], versions: [version], messages: msgs }, now);
     // Even if a caller passes an internal message in by mistake, it is dropped.
     expect(full.messages.map((m) => m.body)).toEqual(["public"]);
     expect(JSON.stringify(full)).not.toContain("SECRET");

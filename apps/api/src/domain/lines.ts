@@ -1,14 +1,20 @@
 import type { Prisma, Quote, QuoteLine, QuoteVersion, Staff } from "@prisma/client";
 import type { Tx } from "../context";
-import { D, computeTotals, marginPctOf, type Decimal } from "./money";
+import { D, checkedTotals, clampPct, marginPctOf, type Decimal } from "./money";
 
 export const DEFAULT_FLOOR_PCT = 15;
 
 export type LineWithCost = QuoteLine;
 
-/** True when margin < floor%. Division free: q*(100-f) < 100*c. Unknown cost can't be judged -> false. */
+/** Cost could not be read from inventory: margin cannot be judged, so the line always needs manager approval. */
+export const isCostUnknown = (l: Pick<QuoteLine, "cost">): boolean => l.cost == null;
+
+/**
+ * True when the line needs manager floor approval: margin < floor% (division free: q*(100-f) < 100*c), or the cost is
+ * unknown (it can never be margin-checked, contract 0.2.0 `costUnknown`).
+ */
 export function isBelowFloor(l: Pick<QuoteLine, "quotedPrice" | "cost">, floorPct: Decimal | number): boolean {
-  if (l.cost == null) return false;
+  if (l.cost == null) return true;
   const f = D(floorPct);
   return l.quotedPrice.mul(D(100).sub(f)).lt(l.cost.mul(100));
 }
@@ -78,9 +84,22 @@ export interface FloorContext {
   floorPct: Decimal;
 }
 
-/** The floor that applies to a quote: its assigned rep's, else the acting staff member's, else the default. */
-export function floorFor(rep: Pick<Staff, "priceFloorPct"> | null | undefined, actor?: Pick<Staff, "priceFloorPct"> | null): Decimal {
-  return rep?.priceFloorPct ?? actor?.priceFloorPct ?? D(DEFAULT_FLOOR_PCT);
+/** The shop-wide default minimum margin (ShopSetting.defaultPriceFloorPct), 15 until a manager changes it. */
+export async function defaultFloor(tx: Tx, shop: string): Promise<Decimal> {
+  const s = await tx.shopSetting.findUnique({ where: { shop } });
+  return s ? D(s.defaultPriceFloorPct) : D(DEFAULT_FLOOR_PCT);
+}
+
+/**
+ * The floor that applies to a quote: its assigned rep's personal override, else the acting staff member's override,
+ * else the shop default (pass it from `defaultFloor`).
+ */
+export function floorFor(
+  rep: Pick<Staff, "priceFloorPct"> | null | undefined,
+  actor: Pick<Staff, "priceFloorPct"> | null | undefined,
+  shopDefault: Decimal | number = DEFAULT_FLOOR_PCT,
+): Decimal {
+  return rep?.priceFloorPct ?? actor?.priceFloorPct ?? D(shopDefault);
 }
 
 /**
@@ -93,20 +112,20 @@ export async function refreshDerived(tx: Tx, quoteId: string) {
   let total: Decimal;
   if (quote.currentVersion > 0 && quote.status !== "DRAFT") {
     const v = await latestVersion(tx, quoteId);
-    total = v ? v.total : computeTotals(visible).total;
+    total = v ? v.total : checkedTotals(visible).total;
   } else {
-    total = computeTotals(visible).total;
+    total = checkedTotals(visible).total;
   }
   const working = await staffWorkingLines(tx, quote);
-  const t = computeTotals(working, quote.workingFreight);
-  const floor = floorFor(quote.assignedRep);
+  const t = checkedTotals(working, quote.workingFreight);
+  const floor = floorFor(quote.assignedRep, null, await defaultFloor(tx, quote.shop));
   const belowFloor = working.some((l) => isBelowFloor(l, floor) && !l.floorApproved);
   await tx.quote.update({
     where: { id: quoteId },
     data: {
       total,
       lineCount: visible.length,
-      marginPct: t.marginPct == null ? null : D(t.marginPct),
+      marginPct: t.marginPct == null ? null : clampPct(D(t.marginPct)),
       belowFloor,
     },
   });

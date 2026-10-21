@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient, StaffRole } from "@prisma/client";
 import type { Config } from "./config";
 import type { AttachmentSigner } from "./attachments";
 import type { BuyerContext, ShopifyGateway } from "./shopify/types";
@@ -28,11 +28,15 @@ export interface StaffPrincipal {
     id: string;
     name: string;
     email: string;
-    isManager: boolean;
-    priceFloorPct: Prisma.Decimal;
+    role: StaffRole;
+    /** Personal override; null = the shop default (ShopSetting.defaultPriceFloorPct). */
+    priceFloorPct: Prisma.Decimal | null;
     shopifyStaffId: string | null;
   };
 }
+
+/** Managers and admins approve floor exceptions and edit teams/settings. */
+export const isManagerRole = (role: StaffRole): boolean => role === "manager" || role === "admin";
 
 declare module "fastify" {
   interface FastifyInstance {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isPurchasable, type QuoteStatus } from "shared";
 import { ShopifyUserError } from "../src/shopify/types";
-import { CUSTOMER_A, CUSTOMER_B, LOC1, STAFF_REP, V_GOOD, V_NOCOST, accepted, draftWith, ensureStaff, eventsOf, sent, submitted, useHarness } from "./helpers";
+import { CUSTOMER_A, CUSTOMER_B, LOC1, STAFF_MANAGER, STAFF_REP, V_GOOD, V_NOCOST, accepted, draftWith, ensureStaff, eventsOf, sent, submitted, useHarness } from "./helpers";
 
 describe("accept -> buy (checkout)", () => {
   const h = useHarness();
@@ -17,7 +17,10 @@ describe("accept -> buy (checkout)", () => {
       freight: "30.00",
       repNote: "Ships in 5 days",
     });
-    await h.s.post(`/s/quotes/${q.id}/send`);
+    // The no-cost line can never be margin-checked, so a manager has to approve it before it can be sent.
+    await ensureStaff(h, STAFF_MANAGER, { isManager: true });
+    expect((await h.asStaff(STAFF_MANAGER).post(`/s/quotes/${q.id}/approve-floor`, {})).status).toBe(200);
+    expect((await h.s.post(`/s/quotes/${q.id}/send`)).status).toBe(200);
     await h.c.post(`/c/quotes/${q.id}/accept`, { versionNo: 1 });
 
     const r = await h.c.post(`/c/quotes/${q.id}/checkout`);

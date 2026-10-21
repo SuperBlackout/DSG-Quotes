@@ -4,8 +4,8 @@ import type { Schemas } from "shared";
 import type { AppDeps, StaffPrincipal, Tx } from "../context";
 import { ApiError, notFound } from "../errors";
 import { staffQuote } from "../serializers/staff";
-import { floorFor, isBelowFloor, latestVersion, refreshDerived, staffWorkingLines } from "./lines";
-import { computeTotals, ZERO, parseMoney, fmt, D } from "./money";
+import { defaultFloor, floorFor, isBelowFloor, isCostUnknown, latestVersion, refreshDerived, staffWorkingLines } from "./lines";
+import { assertFits, checkedTotals, ZERO, parseMoney, fmt, D } from "./money";
 import type { VariantPricing } from "../shopify/types";
 import { applyTransition, lockQuote, writeEvent } from "./transitions";
 
@@ -35,8 +35,9 @@ export async function loadStaffView(tx: Tx, deps: AppDeps, id: string, actor?: P
     versions,
     messages,
     events,
-    floor: floorFor(quote.assignedRep, actor),
+    floor: floorFor(quote.assignedRep, actor, await defaultFloor(tx, quote.shop)),
     latestChangeRequest: typeof payload.message === "string" ? payload.message : null,
+    nextVersionNo: Math.max(quote.currentVersion, ...versions.map((v) => v.versionNo)) + 1,
   });
 }
 
@@ -67,7 +68,7 @@ export async function saveDraftRevision(
 
   for (const l of input.lines) {
     position += 1;
-    const price = parsePrice(l.quotedPrice);
+    const price = parsePrice(l.quotedPrice, "lines");
     if (l.id) {
       const cur = byId.get(l.id);
       if (!cur) throw new ApiError("VALIDATION_FAILED", "Unknown working line", { field: "lines", lineId: l.id });
@@ -97,9 +98,9 @@ export async function saveDraftRevision(
           title: p.title,
           imageUrl: p.imageUrl,
           qty: l.qty,
-          listPrice: parseMoney(p.price),
+          listPrice: assertFits("List price", parseMoney(p.price), "variantId"),
           quotedPrice: price,
-          cost: p.unitCost == null ? null : parseMoney(p.unitCost),
+          cost: p.unitCost == null ? null : assertFits("Cost", parseMoney(p.unitCost), "variantId"),
           lineNote: l.lineNote ?? null,
           addedBy: "STAFF",
           position,
@@ -113,8 +114,7 @@ export async function saveDraftRevision(
 
   const data: Prisma.QuoteUncheckedUpdateInput = {};
   if (input.freight !== undefined) {
-    const f = parsePrice(input.freight);
-    data.workingFreight = f;
+    data.workingFreight = parsePrice(input.freight, "freight");
   }
   if (input.expiresAt !== undefined) data.workingExpiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
   if (input.repNote !== undefined) data.workingRepNote = input.repNote;
@@ -124,15 +124,21 @@ export async function saveDraftRevision(
   await refreshDerived(tx, quoteId);
 }
 
-function parsePrice(v: string) {
+function parsePrice(v: string, field: string) {
   let d;
   try {
     d = parseMoney(v);
   } catch {
-    throw new ApiError("VALIDATION_FAILED", `Invalid amount: ${v}`);
+    throw new ApiError("VALIDATION_FAILED", `Invalid amount: ${v}`, { field });
   }
-  if (d.lt(0)) throw new ApiError("VALIDATION_FAILED", "Amounts cannot be negative");
-  return d;
+  if (d.lt(0)) throw new ApiError("VALIDATION_FAILED", "Amounts cannot be negative", { field });
+  return assertFits("Amount", d, field);
+}
+
+/** max(currentVersion, highest sent version) + 1: the N in "Send vN" (StaffQuote.nextVersionNo). */
+export async function nextVersionNo(tx: Tx, quote: { id: string; currentVersion: number }): Promise<number> {
+  const top = await tx.quoteVersion.aggregate({ where: { quoteId: quote.id }, _max: { versionNo: true } });
+  return Math.max(quote.currentVersion, top._max.versionNo ?? 0) + 1;
 }
 
 export interface SendResult {
@@ -154,11 +160,12 @@ export async function sendRevision(tx: Tx, deps: AppDeps, quoteId: string, actor
   if (lines.length === 0) throw new ApiError("VALIDATION_FAILED", "Add at least one line before sending", { field: "lines" });
 
   // The rep owning the quote decides the floor; an unassigned quote is claimed by whoever sends it.
-  const floor = floorFor(quote.assignedRep, actor);
+  const floor = floorFor(quote.assignedRep, actor, await defaultFloor(tx, quote.shop));
   const blocked = lines.filter((l) => isBelowFloor(l, floor) && !l.floorApproved);
   if (blocked.length) {
-    throw new ApiError("FLOOR_APPROVAL_REQUIRED", "Some lines are below the price floor and need manager approval", {
+    throw new ApiError("FLOOR_APPROVAL_REQUIRED", "Some lines are below the price floor or have an unknown cost, and need manager approval", {
       lineIds: blocked.map((l) => l.id),
+      costUnknownLineIds: blocked.filter(isCostUnknown).map((l) => l.id),
       floorPct: floor.toString(),
     });
   }
@@ -166,8 +173,8 @@ export async function sendRevision(tx: Tx, deps: AppDeps, quoteId: string, actor
   const expiresAt = quote.workingExpiresAt ?? new Date(now.getTime() + DEFAULT_EXPIRY_MS(deps.config.defaultExpiryDays));
   if (expiresAt.getTime() <= now.getTime()) throw new ApiError("VALIDATION_FAILED", "Expiry must be in the future", { field: "expiresAt" });
 
-  const totals = computeTotals(lines, quote.workingFreight);
-  const versionNo = quote.currentVersion + 1;
+  const totals = checkedTotals(lines, quote.workingFreight);
+  const versionNo = await nextVersionNo(tx, quote);
   const version = await tx.quoteVersion.create({
     data: {
       quoteId,

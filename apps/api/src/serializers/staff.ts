@@ -1,7 +1,7 @@
 import type { Event, Job, Message, Quote, QuoteLine, QuoteVersion, Staff } from "@prisma/client";
 import { waitingOn, type QuoteStatus } from "shared";
 import type { Schemas } from "shared";
-import { isBelowFloor } from "../domain/lines";
+import { isBelowFloor, isCostUnknown } from "../domain/lines";
 import { computeTotals, fmt, fmtOrNull, lineTotal, marginPctOf, type Decimal } from "../domain/money";
 import { asAttachments, asEmails, displayNumber } from "./customer";
 
@@ -24,6 +24,7 @@ export function staffLine(l: QuoteLine, floor: Decimal): Schemas["StaffQuoteLine
     lineTotal: fmt(lineTotal(l)),
     marginPct: marginPctOf(l.quotedPrice, l.cost),
     belowFloor: isBelowFloor(l, floor),
+    costUnknown: isCostUnknown(l),
     floorApproved: l.floorApproved,
     lineNote: l.lineNote,
     addedBy: l.addedBy,
@@ -84,6 +85,8 @@ export function staffSummary(q: QuoteRow): Schemas["StaffQuoteSummary"] {
     assignedRepName: q.assignedRep?.name ?? null,
     teamId: q.teamId,
     currentVersion: q.currentVersion,
+    itemCount: q.lineCount,
+    currencyCode: q.currencyCode,
     total: fmt(q.total),
     marginPct: q.marginPct == null ? null : Number(q.marginPct.toString()),
     belowFloor: q.belowFloor,
@@ -100,15 +103,18 @@ export interface StaffQuoteParts {
   events: Event[];
   floor: Decimal;
   latestChangeRequest: string | null;
+  nextVersionNo: number;
 }
 
 export function staffQuote(p: StaffQuoteParts): Schemas["StaffQuote"] {
   const q = p.quote;
   return {
     ...staffSummary(q),
-    // The editor shows the expiry the rep has chosen for the NEXT send (contract has no separate field).
-    expiresAt: (q.workingExpiresAt ?? q.expiresAt) ? iso((q.workingExpiresAt ?? q.expiresAt)!) : null,
     customerId: q.customerId,
+    customerContactName: q.customerName || null,
+    customerContactPhone: q.customerContactPhone,
+    paymentTerms: q.paymentTerms,
+    nextVersionNo: p.nextVersionNo,
     companyId: q.companyId,
     companyLocationId: q.companyLocationId,
     job: q.job ? { id: q.job.id, name: q.job.name, poNumber: q.job.poNumber, siteAddress: q.job.siteAddress } : null,
@@ -122,6 +128,7 @@ export function staffQuote(p: StaffQuoteParts): Schemas["StaffQuote"] {
     latestChangeRequest: p.latestChangeRequest,
     workingLines: p.working.slice().sort((a, b) => a.position - b.position).map((l) => staffLine(l, p.floor)),
     workingFreight: fmt(q.workingFreight),
+    workingExpiresAt: q.workingExpiresAt ? iso(q.workingExpiresAt) : null,
     workingRepNote: q.workingRepNote,
     workingInternalNote: q.workingInternalNote,
     versions: p.versions.slice().sort((a, b) => a.versionNo - b.versionNo).map((v) => staffVersion(v, p.floor)),

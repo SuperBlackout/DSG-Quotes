@@ -54,12 +54,13 @@ describe("money", () => {
 
 describe("price floor rule", () => {
   const line = (q: string, c: string | null) => ({ quotedPrice: D(q), cost: c == null ? null : D(c) });
-  it("is strictly below the floor margin; exactly on the floor passes; unknown cost passes", () => {
+  it("is strictly below the floor margin; exactly on the floor passes; unknown cost ALWAYS needs approval", () => {
     expect(DEFAULT_FLOOR_PCT).toBe(15);
     expect(isBelowFloor(line("100", "85"), 15)).toBe(false); // exactly 15%
     expect(isBelowFloor(line("100", "85.01"), 15)).toBe(true);
     expect(isBelowFloor(line("100", "90"), 15)).toBe(true);
-    expect(isBelowFloor(line("100", null), 15)).toBe(false);
+    expect(isBelowFloor(line("100", null), 15)).toBe(true); // cost unknown can never be margin-checked (contract 0.2.0)
+    expect(isBelowFloor(line("100", null), 0)).toBe(true);
     expect(isBelowFloor(line("0", "5"), 15)).toBe(true); // giving it away
     expect(isBelowFloor(line("10", "20"), 0)).toBe(true); // selling under cost fails even a 0% floor
     expect(isBelowFloor(line("20", "20"), 0)).toBe(false);
