@@ -1,0 +1,7 @@
+{
+  "name": "api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "typecheck": "echo 'backend agent: add tsc' ", "test": "echo 'backend agent: add tests'" }
+}
