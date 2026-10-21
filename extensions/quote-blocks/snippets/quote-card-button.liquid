@@ -1,0 +1,26 @@
+{%- comment -%}
+  Optional collection-card "Add to Quote" (pure markup).
+  Theme code cannot render an app's snippets, so copy this file into the theme's snippets/ folder and add
+      {% render 'quote-card-button', product: card_product %}
+  inside the product card. The "Active quote chip" app embed (with "Enable collection-card buttons" on)
+  loads the CSS and JS that make it work. Adds 1 unit of the first available variant. Hidden when logged out.
+{%- endcomment -%}
+{%- if customer and product.available -%}
+  {%- assign v = product.selected_or_first_available_variant -%}
+  <div
+    class="dsg-quote dsg-quote--card"
+    data-dsg-add-to-quote
+    data-context="card"
+    data-variant-id="{{ v.id }}"
+    data-product-title="{{ product.title | escape }}"
+    data-currency="{{ cart.currency.iso_code }}"
+    data-login-url="{{ routes.account_login_url }}"
+    data-my-quotes-url="{{ routes.account_url }}"
+    data-base="/apps/quotes"
+  >
+    <button type="button" class="dsg-btn dsg-btn--block" data-dsg-trigger aria-expanded="false" aria-haspopup="dialog" aria-controls="dsg-pop-card-{{ product.id }}">
+      <span>Add to Quote</span><span class="dsg-sr"> {{ product.title | escape }}</span>
+    </button>
+    <div class="dsg-pop" id="dsg-pop-card-{{ product.id }}" role="dialog" aria-label="Choose a quote" data-dsg-popover hidden></div>
+  </div>
+{%- endif -%}

@@ -1,0 +1,3 @@
+# Theme app extension. Hand-written (no CLI login at scaffold time); `shopify app deploy` assigns the uid.
+name = "quote-blocks"
+type = "theme"

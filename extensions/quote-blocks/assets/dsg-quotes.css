@@ -1,0 +1,69 @@
+/* DSG Quotes storefront blocks. Colors inherit from the theme (currentColor / inherit);
+ * set --dsg-accent via the block's "Accent color" setting to override. */
+.dsg-quote, .dsg-mc, .dsg-chip { font: inherit; color: inherit; box-sizing: border-box; }
+.dsg-quote *, .dsg-mc *, .dsg-chip * { box-sizing: border-box; }
+.dsg-quote [hidden], .dsg-mc [hidden], .dsg-chip[hidden] { display: none !important; }
+.dsg-quote { position: relative; margin: 10px 0; --dsg-line: color-mix(in srgb, currentColor 25%, transparent); --dsg-tint: color-mix(in srgb, currentColor 6%, transparent); }
+.dsg-mc { --dsg-line: color-mix(in srgb, currentColor 25%, transparent); --dsg-tint: color-mix(in srgb, currentColor 6%, transparent); }
+.dsg-sr { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+.dsg-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 18px; border-radius: var(--buttons-radius, 6px); font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; border: 2px solid var(--dsg-accent, currentColor); background: transparent; color: var(--dsg-accent, inherit); }
+.dsg-btn--primary { background: var(--dsg-accent, currentColor); color: var(--dsg-on-accent, Canvas); }
+.dsg-btn--block { width: 100%; }
+.dsg-btn:focus-visible, .dsg-close:focus-visible, .dsg-chip a:focus-visible { outline: 3px solid var(--dsg-accent, currentColor); outline-offset: 2px; }
+.dsg-btn[disabled] { opacity: .55; cursor: not-allowed; }
+.dsg-btn svg { flex: none; }
+.dsg-btn[aria-expanded="true"] .dsg-caret { transform: rotate(180deg); }
+
+.dsg-pop { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 6px); min-width: min(100%, 320px); background: Canvas; color: CanvasText; border: 1px solid var(--dsg-line); border-radius: 10px; box-shadow: 0 12px 32px rgba(14, 26, 43, .16); }
+.dsg-pop__body { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.dsg-pop__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dsg-close { border: 0; background: none; color: inherit; font-size: 22px; line-height: 1; width: 44px; height: 44px; cursor: pointer; margin: -8px -10px -8px 0; }
+
+.dsg-list { display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow: auto; }
+.dsg-opt { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--dsg-line); border-radius: 8px; padding: 12px; cursor: pointer; }
+.dsg-opt.is-selected { border: 2px solid var(--dsg-accent, currentColor); background: var(--dsg-tint); padding: 11px; }
+.dsg-opt--new { border-style: dashed; }
+.dsg-opt input[type=radio] { margin-top: 4px; flex: none; }
+.dsg-opt__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.dsg-opt__meta { font-size: 12px; opacity: .75; }
+.dsg-pill { font-size: 11px; font-weight: 600; background: var(--dsg-tint); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
+
+.dsg-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.dsg-row input { flex: 1 1 130px; min-width: 0; }
+.dsg-quote input[type=text], .dsg-mc input[type=text], .dsg-mc input[type=date], .dsg-mc select, .dsg-mc textarea { font: inherit; color: inherit; background: transparent; border: 1px solid var(--dsg-line); border-radius: 6px; padding: 9px 10px; width: 100%; }
+.dsg-quote input[aria-invalid=true] { border-color: #b3261e; }
+.dsg-note { font-size: 12px; opacity: .8; margin: 0; }
+.dsg-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.dsg-error { color: #b3261e; font-size: 13px; font-weight: 600; }
+.dsg-status { font-size: 13px; min-height: 0; }
+.dsg-status:empty { display: none; }
+
+/* cart block */
+.dsg-card { border: 2px solid var(--dsg-accent, currentColor); border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.dsg-mc__head { display: flex; gap: 10px; align-items: center; }
+.dsg-mc__head > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.dsg-mc__icon { width: 36px; height: 36px; border-radius: 8px; background: var(--dsg-tint); display: flex; align-items: center; justify-content: center; flex: none; }
+.dsg-mc__title { font-size: 15px; }
+.dsg-segs { border: 0; padding: 0; margin: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.dsg-seg { flex: 1 1 140px; display: flex; gap: 8px; align-items: center; border: 1px solid var(--dsg-line); border-radius: 6px; padding: 9px 10px; cursor: pointer; }
+.dsg-seg.is-selected { border: 2px solid var(--dsg-accent, currentColor); background: var(--dsg-tint); padding: 8px 9px; font-weight: 600; }
+.dsg-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; }
+.dsg-field--half { flex: 1 1 120px; }
+.dsg-field textarea { resize: vertical; font-weight: 400; }
+.dsg-check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.dsg-mc .dsg-actions { justify-content: stretch; }
+.dsg-mc .dsg-actions .dsg-btn { flex: 1 1 140px; }
+
+/* header chip */
+.dsg-chip { position: fixed; z-index: 20; bottom: 16px; left: 16px; max-width: calc(100vw - 32px); }
+.dsg-chip--right { left: auto; right: 16px; }
+.dsg-chip--inline { position: static; max-width: none; }
+.dsg-chip a { display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--dsg-line, #b9d3ea); background: Canvas; color: CanvasText; border-radius: 999px; padding: 6px 14px 6px 8px; text-decoration: none; box-shadow: 0 4px 14px rgba(14, 26, 43, .15); min-height: 44px; }
+.dsg-chip__icon { background: var(--dsg-accent, currentColor); color: var(--dsg-on-accent, Canvas); border-radius: 999px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.dsg-chip__lbl { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.dsg-chip__lbl small { font-size: 11px; opacity: .75; }
+.dsg-chip__lbl strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 480px) { .dsg-pop { position: static; margin-top: 8px; } .dsg-actions .dsg-btn { flex: 1 1 100%; } }
+@media (prefers-reduced-motion: no-preference) { .dsg-caret { transition: transform .15s; } }

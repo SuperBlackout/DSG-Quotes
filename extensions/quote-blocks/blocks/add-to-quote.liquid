@@ -1,0 +1,66 @@
+{%- comment -%}
+  DSG Quotes: "Add to Quote" button + quote picker popover (mockup screen 1).
+  Logged-out visitors get a sign-in link; the popover itself is built by assets/dsg-add-to-quote.js.
+{%- endcomment -%}
+{{ 'dsg-quotes.css' | asset_url | stylesheet_tag }}
+{%- liquid
+  assign variant = product.selected_or_first_available_variant
+  assign sep = '?'
+  if routes.account_login_url contains '?'
+    assign sep = '&'
+  endif
+  assign login_url = routes.account_login_url | append: sep | append: 'return_url=' | append: request.path | url_encode
+  assign label = block.settings.button_label | default: 'Add to Quote'
+  assign pop_id = 'dsg-pop-' | append: block.id
+-%}
+<div
+  class="dsg-quote"
+  data-dsg-add-to-quote
+  data-context="pdp"
+  data-logged-in="{% if customer %}true{% else %}false{% endif %}"
+  data-variant-id="{{ variant.id }}"
+  data-product-title="{{ product.title | escape }}"
+  data-currency="{{ cart.currency.iso_code }}"
+  data-login-url="{{ login_url }}"
+  data-my-quotes-url="{{ block.settings.my_quotes_url | default: routes.account_url }}"
+  data-base="/apps/quotes"
+  {% if block.settings.accent != blank %}style="--dsg-accent: {{ block.settings.accent }}; --dsg-on-accent: {{ block.settings.on_accent | default: '#ffffff' }}"{% endif %}
+  {{ block.shopify_attributes }}
+>
+  {%- if customer -%}
+    <button
+      type="button"
+      class="dsg-btn dsg-btn--block"
+      data-dsg-trigger
+      aria-expanded="false"
+      aria-haspopup="dialog"
+      aria-controls="{{ pop_id }}"
+    >
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h8l4 4v14H7z"/><path d="M10 12h6M10 16h6"/></svg>
+      <span>{{ label }}</span>
+      <svg class="dsg-caret" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="dsg-pop" id="{{ pop_id }}" role="dialog" aria-label="Choose a quote" data-dsg-popover hidden></div>
+  {%- else -%}
+    <a class="dsg-btn dsg-btn--block" href="{{ login_url }}" data-dsg-signin>
+      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h8l4 4v14H7z"/><path d="M10 12h6M10 16h6"/></svg>
+      <span>Sign in to request a quote</span>
+    </a>
+  {%- endif -%}
+</div>
+<script src="{{ 'dsg-quotes-core.js' | asset_url }}" defer></script>
+<script src="{{ 'dsg-add-to-quote.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Add to Quote",
+  "target": "section",
+  "templates": ["product"],
+  "settings": [
+    { "type": "text", "id": "button_label", "label": "Button label", "default": "Add to Quote" },
+    { "type": "text", "id": "my_quotes_url", "label": "My Quotes URL", "info": "Customer account page for quotes. Use {id} where the quote id goes. Blank uses the account page." },
+    { "type": "color", "id": "accent", "label": "Accent color", "info": "Leave empty to inherit the theme's text color." },
+    { "type": "color", "id": "on_accent", "label": "Text on accent color", "default": "#ffffff" }
+  ]
+}
+{% endschema %}
