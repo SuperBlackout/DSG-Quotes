@@ -70,7 +70,7 @@ services:
     region: ohio
     plan: starter
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate && pnpm build
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate
     preDeployCommand: pnpm -F api prisma migrate deploy
     startCommand: pnpm -F api start
     healthCheckPath: /healthz
@@ -90,7 +90,7 @@ services:
     region: ohio
     plan: starter
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate && pnpm -F worker build
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate
     startCommand: pnpm -F worker start
     autoDeploy: false
     envVars:
@@ -109,7 +109,7 @@ services:
     plan: starter
     schedule: "0 * * * *"   # hourly: EXPIRE transitions. Daily 8:00 ET reminders/digest and the Monday weekly summary are gated inside the job by local time.
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate && pnpm -F worker build
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate
     startCommand: pnpm -F worker cron
     envVars:
       - fromGroup: dsg-quotes-shared
