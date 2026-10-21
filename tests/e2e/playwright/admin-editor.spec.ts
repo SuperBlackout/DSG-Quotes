@@ -40,7 +40,7 @@ test.describe("Screen 7: editor", () => {
 
   test("claim, reprice, internal note + customer message, preview as customer, send v2", async ({ page }) => {
     const app = await openQuote(page, "E2E claim me");
-    await app.getByLabel("Assigned rep").selectOption({ label: /./ }).catch(() => undefined);
+    await app.getByLabel("Assigned rep").selectOption({ index: 0 }).catch(() => undefined);
     // cost / dealer / margin columns are visible to staff
     for (const col of ["Dealer", "Quote price", "Margin"]) await expect(app.getByText(col, { exact: true }).first()).toBeVisible();
     await app.getByLabel("Percent off dealer price").fill("5");
@@ -84,6 +84,24 @@ test.describe("Screen 7: editor", () => {
     await mapp.getByRole("button", { name: /^Send v\d+ to customer$/ }).click();
     await mapp.getByRole("button", { name: /^Send v\d+$/ }).click();
     await expect(mapp.getByText(/Waiting on customer|Quote ready/i).first()).toBeVisible();
+    await mgr.close();
+  });
+
+  // Contract 0.2.0 (ADM-9): a line with unknown inventory cost shows an "Unknown cost" badge, a dash for margin and blocks Send until a
+  // manager approves. Precondition: a SUBMITTED quote titled "E2E unknown cost" whose line variant has no inventory cost in the dev store.
+  // The API behaviour behind it is proven by api/floor-expiry-checkout.e2e.test.ts; this only checks the admin UI renders it.
+  test("unknown-cost line: badge, margin dash, Send blocked until a manager approves", async ({ page, browser }) => {
+    const app = await openQuote(page, "E2E unknown cost");
+    await expect(app.getByText("Unknown cost").first()).toBeVisible();
+    await app.getByRole("button", { name: /^Send v\d+ to customer$/ }).click();
+    await app.getByRole("button", { name: /^Send v\d+$/ }).click();
+    await expect(app.getByRole("heading", { name: "Manager approval needed to send" })).toBeVisible();
+
+    const mgr = await browser.newContext({ storageState: env.state.manager });
+    const mpage = await mgr.newPage();
+    const mapp = await openQuote(mpage, "E2E unknown cost");
+    await mapp.getByRole("button", { name: /approve/i }).first().click();
+    await expect(mapp.getByText("Floor approved").first()).toBeVisible();
     await mgr.close();
   });
 

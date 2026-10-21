@@ -24,9 +24,15 @@ Do not run this and `pnpm -F api test` at the same time against the SAME databas
 
 If `prisma generate` is blocked (no access to binaries.prisma.sh), run it with `PRISMA_SCHEMA_ENGINE_BINARY=/bin/true`
 or copy the generated `.prisma/client` folder from another checkout's `node_modules/.pnpm/@prisma+client*/node_modules/`.
-After adding this package's dependencies run `pnpm install` once (the lead must regenerate `pnpm-lock.yaml`; QA does not edit it).
+This package declares everything it imports itself (`fastify`, `@prisma/client`, `pg`, `yaml`, `vitest`); run `pnpm install` once.
+Use a database of your own (`E2E_DATABASE_URL`): other agents and `pnpm -F api test` default to `dsg_test` on the same server, and two runs
+sharing one database deadlock on the TRUNCATE and produce random 404s.
 
-What it covers (fixtures: 2 companies, 3 dealers, 2 reps, 1 manager, in `api/support/world.ts` and `fixtures.ts`):
+Staff fixtures have EXPLICIT roles (the API makes the first staff member of a shop admin, so call order must not decide): admin Adam,
+manager Maya, reps Rita and Ross; personal floors are NULL (shop default 15%) unless a test sets one. Customer actors use the credential of
+their mount: `w.dana` etc. send the Bearer session token to `/c/*`; `w.danaProxy` signs the app proxy query for `/proxy/c/*`.
+
+What it covers (fixtures: 2 companies, 3 dealers, 2 reps, 1 manager, 1 admin, in `api/support/world.ts` and `fixtures.ts`):
 
 | File | Covers |
 | --- | --- |
@@ -36,7 +42,14 @@ What it covers (fixtures: 2 companies, 3 dealers, 2 reps, 1 manager, in `api/sup
 | `privacy-scoping.e2e.test.ts` | Internal notes, cost and margin never in `/c`; auth boundaries; cross-company and cross-location access is 404 on every `/c` route in every status |
 | `contract.e2e.test.ts` | Spec sanity, notification prefs, staff create/assign, filters, pagination, error shapes, anonymous 401 on every operation |
 | `zz-coverage.e2e.test.ts` | Fails if any `/c` or `/s` operation was never hit with a success and an error status |
-| `known-bugs.e2e.test.ts` | Backend bugs found by QA, written as `it.fails`: green now, red when fixed (then drop `.fails`) |
+| `staff-admin.e2e.test.ts` | `/s/me`, `/s/staff`, `/s/teams`, `/s/settings` (routing on submit, default floor), `/s/saved-replies`, `/s/customers`, inbox `tabCounts` / `rep=` / `Q-#####` search / `itemCount`, editor fields (`paymentTerms`, `workingExpiresAt`, `nextVersionNo`, variant snapshot on draft-revision), staff attachments |
+| `customer-followups.e2e.test.ts` | API-1 from-cart header fields, API-2 `limit=100`, API-3 active quote, API-6 summary fields, API-7 `canEditHeader`, API-11 `NOT_PURCHASABLE` / `VERSION_MISMATCH` |
+| `customer-pdf-auth.e2e.test.ts` | `GET /c/quotes/{id}/pdf` (versions, headers, no internal content) and the auth split: `/c/*` Bearer only, `/proxy/c/*` app proxy HMAC only |
+| `known-bugs.e2e.test.ts` | Regressions for the four QA bugs (neededBy calendar date, expiresAt offset, money/qty overflow, staff message on DRAFT), now ordinary tests. New backend bugs go here as `it.fails` with the exact failing request |
+
+Also enforced on every request by the harness: the response `Content-Type` must be a media type the contract declares for that status (`application/pdf` for the PDF route).
+Unknown-cost lines (no inventory cost) always need a manager/admin approval before Send: `flows.sentQuote` approves them automatically via `approveUnknownCost`;
+the dedicated tests in `floor-expiry-checkout.e2e.test.ts` exercise the block, `request-floor-approval` (`FLOOR_APPROVAL_REQUESTED` event) and `approve-floor`.
 
 Enforced on EVERY request by the harness (`api/support/world.ts`), not just in dedicated tests:
 
@@ -76,7 +89,7 @@ npx playwright codegen --save-storage=.auth/manager.json   https://admin.shopify
 Override paths with `E2E_DEALER_A_STATE`, `E2E_DEALER_B_STATE`, `E2E_DEALER_C_STATE`, `E2E_REP_STATE`, `E2E_MANAGER_STATE`. `.auth/` is git-ignored.
 
 Seeding the dev store: the specs expect quotes whose titles start with `E2E` in known states (`E2E multi-version` with two sent versions, `E2E ready to accept`,
-`E2E expired`, `E2E claim me` SUBMITTED, `E2E below floor` SUBMITTED with a thin-margin line, `E2E changes requested`, plus an Acme-only quote the Other Co dealer must not see).
+`E2E expired`, `E2E claim me` SUBMITTED, `E2E below floor` SUBMITTED with a thin-margin line, `E2E unknown cost` SUBMITTED with a variant that has no inventory cost, `E2E changes requested`, plus an Acme-only quote the Other Co dealer must not see).
 Create them with `pnpm -F api db:seed`-style scripts against the dev database or by hand; staff internal notes must contain the text `E2E-INTERNAL` so the specs can prove it never reaches a dealer.
 The seeding helper is the first thing to add once the store exists (reuse `api/support/flows.ts` against the live API with real tokens).
 
