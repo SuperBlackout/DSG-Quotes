@@ -101,6 +101,7 @@ export function quoteSubline(q: CustomerQuoteSummary): string {
   const parts: string[] = [];
   if (q.lineCount > 0 || q.status !== "DRAFT") parts.push(plural(q.lineCount, "item"));
   if (q.ownerName) parts.push(`Owner: ${q.ownerName}`);
+  if (q.assignedRepName) parts.push(`Rep: ${q.assignedRepName}`);
   const date = q.expiresAt ? formatShortDate(q.expiresAt) : "";
   switch (q.status) {
     case "DRAFT":
@@ -125,6 +126,26 @@ export function quoteSubline(q: CustomerQuoteSummary): string {
       break;
   }
   return parts.join(" · ");
+}
+
+/** "1 new message" / "3 new messages"; undefined when nothing is unread. */
+export function unreadLabel(q: Pick<CustomerQuoteSummary, "unreadCount">): string | undefined {
+  const n = q.unreadCount;
+  return n > 0 ? `${n} new ${n === 1 ? "message" : "messages"}` : undefined;
+}
+
+/**
+ * Struck-through old total shown beside the current one ("was $3,900.00"). Only when a previous
+ * sent version exists and its total actually differs from the current total.
+ */
+export function previousTotalText(q: Pick<CustomerQuoteSummary, "total" | "previousTotal" | "currencyCode">): string | undefined {
+  if (q.previousTotal === null || q.previousTotal === undefined || q.previousTotal === "") return undefined;
+  try {
+    if (toCents(q.previousTotal) === toCents(q.total)) return undefined;
+  } catch {
+    return undefined;
+  }
+  return formatMoney(q.previousTotal, q.currencyCode);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -172,7 +193,7 @@ export function statusBanner(q: CustomerQuote, now: Date = new Date()): StatusBa
   switch (q.status) {
     case "QUOTE_READY": {
       const sent = latest ? ` · ${formatRelative(latest.sentAt, now)}` : "";
-      const was = prev && toCents(prev.total) !== toCents(q.total) ? ` (was ${formatMoney(prev.total)})` : "";
+      const was = prev && toCents(prev.total) !== toCents(q.total) ? ` (was ${formatMoney(prev.total, q.currencyCode)})` : "";
       const held = q.expiresAt ? ` Prices are held until ${expiryText(q)}.` : "";
       const actions: BannerAction[] = [];
       if (a.canRequestChanges) actions.push({ id: "request-changes", label: "Request changes", variant: "secondary" });
@@ -180,7 +201,7 @@ export function statusBanner(q: CustomerQuote, now: Date = new Date()): StatusBa
       return {
         tone: "success",
         heading: `${rep} sent ${latest && latest.versionNo > 1 ? `revision v${latest.versionNo}` : "your quote"}${sent}`,
-        body: `New total ${formatMoney(q.total)}${was}.${held} Accept to buy, or ask for changes.`,
+        body: `New total ${formatMoney(q.total, q.currencyCode)}${was}.${held} Accept to buy, or ask for changes.`,
         actions,
       };
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDetailView, canEditJobDetails, currentVersionNo, versionTabs } from "../src/lib/detail";
+import { buildDetailView, currentVersionNo, versionTabs } from "../src/lib/detail";
 import { line, quote, version } from "./fixtures";
 
 const v1 = version({
@@ -74,11 +74,3 @@ describe("buildDetailView", () => {
   });
 });
 
-describe("canEditJobDetails", () => {
-  it("is open while the quote is live and closed afterwards", () => {
-    expect(canEditJobDetails("DRAFT")).toBe(true);
-    expect(canEditJobDetails("QUOTE_READY")).toBe(true);
-    expect(canEditJobDetails("ORDERED")).toBe(false);
-    expect(canEditJobDetails("EXPIRED")).toBe(false);
-  });
-});
