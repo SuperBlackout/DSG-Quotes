@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List my company's quotes */
+        /**
+         * List my company's quotes
+         * @description `limit` may be up to 100. The storefront popover lists drafts with `status=DRAFT&limit=100`.
+         */
         get: operations["listCustomerQuotes"];
         put?: never;
         /** Create a draft quote */
@@ -303,7 +306,12 @@ export interface paths {
         };
         /** Draft that "Add to Quote" targets (header chip) */
         get: operations["getActiveQuote"];
-        /** Choose the target draft */
+        /**
+         * Choose the target draft
+         * @description The storefront calls this after saving a draft from the cart (`POST /c/quotes/from-cart` with
+         *     `submit: false`) so the header chip follows the new draft. Allowed only for the caller's own DRAFT quotes
+         *     (or `quoteId: null` to clear).
+         */
         put: operations["setActiveQuote"];
         post?: never;
         delete?: never;
@@ -740,6 +748,10 @@ export interface components {
                 /** @enum {string} */
                 mode: "existing";
                 quoteId: string;
+                poNumber?: string;
+                /** Format: date */
+                neededBy?: string;
+                notesToSales?: string;
             };
             /**
              * @description true = "Submit to sales", false = "Save as draft".
@@ -747,7 +759,8 @@ export interface components {
              */
             submit: boolean;
             /**
-             * @description Informational; the storefront block clears the cart after a 2xx.
+             * @description Informational only. The API ignores it and never touches the Shopify cart; the storefront block
+             *     clears the cart itself after a 2xx response.
              * @default false
              */
             emptyCart: boolean;
@@ -1000,6 +1013,7 @@ export interface components {
         QuoteId: string;
         LineId: string;
         Cursor: string;
+        /** @description Page size, 1 to 100 (default 25). */
         Limit: number;
     };
     requestBodies: never;
@@ -1013,9 +1027,10 @@ export interface operations {
             query?: {
                 status?: components["schemas"]["QuoteStatus"];
                 jobId?: string;
-                /** @description Free-text search over number, title, job, PO. */
+                /** @description Free-text search over number (Q-##### or digits), title, job, PO. */
                 q?: string;
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1406,6 +1421,7 @@ export interface operations {
         parameters: {
             query?: {
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1587,6 +1603,7 @@ export interface operations {
                 team?: string;
                 q?: string;
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1792,6 +1809,7 @@ export interface operations {
         parameters: {
             query?: {
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
