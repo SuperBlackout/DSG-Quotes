@@ -59,7 +59,7 @@ export function AcceptModal({
         ) : (
           <s-text>
             Accept {number}
-            {versionNo ? ` (version ${versionNo})` : ""} for {formatMoney(quote.total)}?
+            {versionNo ? ` (version ${versionNo})` : ""} for {formatMoney(quote.total, quote.currencyCode)}?
             {quote.expiresAt ? ` Prices are held until ${formatLongDate(quote.expiresAt)}.` : ""} You will go straight to
             checkout to place the order.
           </s-text>

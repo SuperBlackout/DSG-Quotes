@@ -4,7 +4,7 @@ import { api } from "../api/instance";
 import type { CustomerQuoteSummary } from "../api/types";
 import { CHIPS, chipCounts, filterQuotes, groupQuotes, listSubtitle, type ChipId, type GroupBy } from "../lib/filters";
 import { formatMoney, formatRelative } from "../lib/format";
-import { quoteSubline, rowActions, type RowAction } from "../lib/status";
+import { previousTotalText, quoteSubline, rowActions, unreadLabel, type RowAction } from "../lib/status";
 import { orderHref } from "../router";
 import { ErrorBanner, Loading, NavLink, StatusBadge, WIDE_900, errorMessage } from "../ui/common";
 import { valueOf } from "../ui/events";
@@ -217,9 +217,11 @@ function QuoteRow({
 }) {
   const actions = rowActions(q);
   const closed = q.waitingOn === "none";
+  const was = previousTotalText(q);
+  const unread = unreadLabel(q);
   return (
     <s-grid
-      gridTemplateColumns={`${WIDE_900} 6rem minmax(0, 2fr) 11rem 8rem 8rem auto, 1fr`}
+      gridTemplateColumns={`${WIDE_900} 6rem minmax(0, 2fr) 14rem 8rem 8rem auto, 1fr`}
       gap="small"
       alignItems="center"
     >
@@ -232,10 +234,14 @@ function QuoteRow({
           {quoteSubline(q)}
         </s-text>
       </s-stack>
-      <s-stack direction="inline">
+      <s-stack direction="inline" gap="small-200" alignItems="center">
         <StatusBadge quote={q} />
+        {unread ? <s-badge tone="critical">{unread}</s-badge> : null}
       </s-stack>
-      <s-text type="strong">{formatMoney(q.total)}</s-text>
+      <s-stack direction="block" gap="small-300">
+        <s-text type="strong">{formatMoney(q.total, q.currencyCode)}</s-text>
+        {was ? <s-text type="redundant" color="subdued">{was}</s-text> : null}
+      </s-stack>
       <s-text color="subdued">{formatRelative(q.updatedAt)}</s-text>
       <s-stack direction="inline" gap="small">
         {actions.map((a) =>
