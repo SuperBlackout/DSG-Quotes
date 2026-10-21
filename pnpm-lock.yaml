@@ -209,12 +209,6 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
 
-  extensions/quote-blocks:
-    devDependencies:
-      jsdom:
-        specifier: ^25.0.1
-        version: 25.0.1
-
   packages/shared:
     devDependencies:
       '@redocly/cli':
@@ -271,6 +265,12 @@ importers:
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
+
+  tests/quote-blocks:
+    devDependencies:
+      jsdom:
+        specifier: ^25.0.1
+        version: 25.0.1
 
 packages:
 

@@ -22,6 +22,9 @@ Applies the requests recorded by the four builders. Code follow-ups per folder: 
 ### Admin requests applied (contract 0.2.0)
 - `GET /s/me`; `GET /s/staff`, `PUT /s/staff/{id}`; `/s/teams` CRUD; `GET/PUT /s/settings`; `GET/PUT /s/saved-replies`; `POST /s/quotes/{id}/request-floor-approval`; inbox `rep=me|unassigned`, `Q-#####` search, `tabCounts`, `itemCount`; `GET /s/customers?q=`; `paymentTerms`, customer contact name/phone on `StaffQuote`; `POST /s/quotes/{id}/attachments/upload-url`; Send vN rule. Follow-ups ADM-1..14.
 
+### Theme extension layout fix
+- Shopify theme app extensions may only contain assets, blocks, locales and snippets. Tests, package.json and README moved to `tests/quote-blocks/` (package `quote-blocks-tests`); added `locales/en.default.json`. Found by the first `shopify app deploy`.
+
 ### Worker, notifications, e2e (contract 0.2.0 follow-up)
 - api: contract 0.2.0 (staff roles/teams/settings/saved replies, routing, floor-approval request, PDF, CORS/auth split), four QA bug fixes with regression tests, NotificationLog and SmsOptOut tables; settings refuse SMS opt-in for a number that sent STOP.
 - worker: seven pref keys, role/team recipients, per-watcher scope/channels, Monday weekly summary, FLOOR_APPROVAL_REQUESTED to managers, send log in NotificationLog, STOP history in SmsOptOut.

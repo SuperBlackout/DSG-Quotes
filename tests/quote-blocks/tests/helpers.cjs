@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
-const ASSETS = path.join(__dirname, '..', 'assets');
+const ASSETS = path.join(__dirname, '..', '..', '..', 'extensions', 'quote-blocks', 'assets');
 const read = (f) => fs.readFileSync(path.join(ASSETS, f), 'utf8');
 
 function quote(over) {

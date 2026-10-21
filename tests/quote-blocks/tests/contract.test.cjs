@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { boot, defaultState, until, PDP_HTML, CART_HTML, CHIP_HTML } = require('./helpers.cjs');
 
-const EXT = path.join(__dirname, '..');
+const EXT = path.join(__dirname, '..', '..', '..', 'extensions', 'quote-blocks');
 const spec = fs.readFileSync(path.join(EXT, '..', '..', 'docs', 'openapi.yaml'), 'utf8').split('\n');
 
 function specRoutes() {
