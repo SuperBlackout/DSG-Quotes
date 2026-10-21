@@ -38,6 +38,12 @@ enum Channel {
   SMS
 }
 
+enum StaffRole {
+  rep
+  manager
+  admin
+}
+
 // Which collection a QuoteLine belongs to.
 //  CUSTOMER = the customer's own lines (draft, and the request as submitted). Never repriced by staff.
 //  STAFF    = the rep's editable working revision (draft-revision). Invisible to customers.
@@ -103,6 +109,9 @@ model Quote {
   neededBy            DateTime?
   shipToAddress       Json?
   expiresAt           DateTime?
+  currencyCode        String         @default("USD") // ISO 4217, snapshotted from the shop at creation
+  paymentTerms        String? // company payment terms name from Shopify (read only), e.g. "Net 30"
+  customerContactPhone String?
   // Derived, refreshed whenever lines change (see domain/derived.ts)
   total               Decimal        @default(0) @db.Decimal(12, 2) // customer-visible total
   lineCount           Int            @default(0)
@@ -270,16 +279,95 @@ model Event {
 }
 
 model Staff {
-  id             String  @id @default(cuid())
+  id             String       @id @default(cuid())
   shop           String
   shopifyStaffId String?
   name           String
   email          String
   phone          String?
-  teamId         String?
-  priceFloorPct  Decimal @default(15) @db.Decimal(5, 2)
-  isManager      Boolean @default(false)
+  role           StaffRole    @default(rep)
+  active         Boolean      @default(true)
+  priceFloorPct  Decimal?     @db.Decimal(5, 2) // personal override; null = use ShopSetting.defaultPriceFloorPct
   quotes         Quote[]
+  teams          TeamMember[]
 
   @@unique([shop, shopifyStaffId])
+}
+
+model Team {
+  id        String       @id @default(cuid())
+  shop      String
+  name      String
+  createdAt DateTime     @default(now())
+  members   TeamMember[]
+
+  @@index([shop])
+}
+
+model TeamMember {
+  teamId  String
+  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  staffId String
+  staff   Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, staffId])
+  @@index([staffId])
+}
+
+// One row per shop (created lazily; defaults apply when absent).
+model ShopSetting {
+  shop                 String   @id
+  defaultPriceFloorPct Decimal  @default(15) @db.Decimal(5, 2)
+  defaultTeamId        String?
+  autoAssignByCompany  Boolean  @default(false)
+  updatedAt            DateTime @updatedAt
+}
+
+// Auto-assign new SUBMITTED quotes from a company (applied only when ShopSetting.autoAssignByCompany).
+model RoutingRule {
+  id        String  @id @default(cuid())
+  shop      String
+  companyId String // gid://shopify/Company/...
+  repId     String?
+  teamId    String?
+  position  Int     @default(0)
+
+  @@index([shop, companyId])
+}
+
+// shared = visible to every staff member (managed by managers); otherwise personal to `ownerId`.
+model SavedReply {
+  id        String   @id @default(cuid())
+  shop      String
+  ownerId   String?
+  title     String
+  body      String
+  shared    Boolean  @default(false)
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop, shared])
+  @@index([shop, ownerId])
+}
+
+// One row per outbound notification attempt (written by the worker; read for support and dedupe).
+model NotificationLog {
+  id         String   @id @default(cuid())
+  quoteId    String? // null for non-quote mail such as the weekly summary
+  channel    Channel
+  to         String // email address or E.164 phone number
+  status     String // e.g. SENT, FAILED, SKIPPED_QUIET_HOURS, SKIPPED_NO_OPT_IN
+  providerId String? // Postmark MessageID / Twilio MessageSid
+  createdAt  DateTime @default(now())
+
+  @@index([quoteId, createdAt])
+  @@index([to, createdAt])
+}
+
+// Numbers that replied STOP (or were opted out another way). Never text a number listed here.
+model SmsOptOut {
+  phone  String   @id // E.164
+  at     DateTime @default(now())
+  source String // e.g. twilio-stop, admin, customer-prefs
 }

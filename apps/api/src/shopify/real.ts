@@ -1,6 +1,8 @@
 import { ADMIN_GRAPHQL_PATH } from "shared";
 import {
   BUYER_BY_CUSTOMER,
+  COMPANY_CONTACT_SEARCH,
+  CUSTOMER_SEARCH,
   DRAFT_ORDER_COMPLETE,
   DRAFT_ORDER_CREATE,
   DRAFT_ORDER_DELETE,
@@ -9,6 +11,7 @@ import {
 import type {
   BuyerContext,
   CompleteDraftOrderResult,
+  CustomerSearchResult,
   DraftOrderInput,
   DraftOrderResult,
   ShopifyGateway,
@@ -60,6 +63,7 @@ export class RealShopify implements ShopifyGateway {
         id: string;
         displayName: string;
         defaultEmailAddress: { emailAddress: string } | null;
+        defaultPhoneNumber: { phoneNumber: string } | null;
         companyContactProfiles: {
           id: string;
           company: { id: string; name: string };
@@ -68,7 +72,7 @@ export class RealShopify implements ShopifyGateway {
               companyLocation: {
                 id: string;
                 name: string;
-                buyerExperienceConfiguration: { paymentTermsTemplate: { id: string } | null } | null;
+                buyerExperienceConfiguration: { paymentTermsTemplate: { id: string; name: string } | null } | null;
               };
             }[];
           };
@@ -92,6 +96,8 @@ export class RealShopify implements ShopifyGateway {
       locations: locs.map((l) => ({ id: l.id, name: l.name })),
       companyLocationId: chosen.id,
       paymentTermsTemplateId: chosen.buyerExperienceConfiguration?.paymentTermsTemplate?.id ?? null,
+      paymentTerms: chosen.buyerExperienceConfiguration?.paymentTermsTemplate?.name ?? null,
+      phone: c.defaultPhoneNumber?.phoneNumber ?? null,
       currencyCode: data.shop.currencyCode,
     };
   }
@@ -120,6 +126,59 @@ export class RealShopify implements ShopifyGateway {
       price: money(v.contextualPricing.price.amount),
       unitCost: v.inventoryItem?.unitCost ? money(v.inventoryItem.unitCost.amount) : null,
     };
+  }
+
+  async searchCustomers(query: string, limit: number): Promise<CustomerSearchResult[]> {
+    type Addr = { address1: string | null; address2: string | null; city: string | null; province: string | null; zip: string | null; countryCode: string | null; phone: string | null };
+    type Cust = {
+      id: string;
+      displayName: string;
+      defaultEmailAddress: { emailAddress: string } | null;
+      defaultPhoneNumber: { phoneNumber: string } | null;
+      companyContactProfiles: { company: { id: string; name: string; locations: { nodes: { id: string; name: string; shippingAddress: Addr | null }[] } } }[];
+    };
+    // Shopify's search syntax treats quotes and colons specially; search the term as plain text.
+    const term = query.replace(/["\\:]/g, " ").trim();
+    const [byCustomer, byCompany] = await Promise.all([
+      this.gql<{ customers: { nodes: Cust[] } }>(CUSTOMER_SEARCH, { query: term, first: limit }),
+      this.gql<{ companies: { nodes: { contacts: { nodes: { customer: Cust | null }[] } }[] } }>(COMPANY_CONTACT_SEARCH, {
+        query: `name:${term}*`,
+        first: limit,
+      }),
+    ]);
+    const all = [...byCustomer.customers.nodes, ...byCompany.companies.nodes.flatMap((c) => c.contacts.nodes.flatMap((n) => (n.customer ? [n.customer] : [])))];
+    const seen = new Set<string>();
+    const out: CustomerSearchResult[] = [];
+    for (const c of all) {
+      const profile = c.companyContactProfiles[0];
+      if (!profile || seen.has(c.id)) continue; // only company contacts can be quoted for
+      seen.add(c.id);
+      out.push({
+        customerId: c.id,
+        name: c.displayName,
+        email: c.defaultEmailAddress?.emailAddress ?? "",
+        phone: c.defaultPhoneNumber?.phoneNumber ?? null,
+        companyId: profile.company.id,
+        companyName: profile.company.name,
+        locations: profile.company.locations.nodes.map((l) => ({
+          companyLocationId: l.id,
+          name: l.name,
+          shipTo: l.shippingAddress
+            ? {
+                address1: l.shippingAddress.address1,
+                address2: l.shippingAddress.address2,
+                city: l.shippingAddress.city,
+                province: l.shippingAddress.province,
+                zip: l.shippingAddress.zip,
+                country: l.shippingAddress.countryCode,
+                phone: l.shippingAddress.phone,
+              }
+            : null,
+        })),
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   async createDraftOrder(input: DraftOrderInput): Promise<DraftOrderResult> {

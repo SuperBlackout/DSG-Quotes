@@ -23,7 +23,22 @@ export interface BuyerContext {
   companyLocationId: string;
   /** Set when the location has net terms: checkout completes the draft order instead of returning an invoice. */
   paymentTermsTemplateId: string | null;
+  /** Human name of those terms ("Net 30"), shown read-only to staff. */
+  paymentTerms?: string | null;
+  /** The contact's phone, when Shopify has one (shown to staff only). */
+  phone?: string | null;
   currencyCode: string;
+}
+
+/** One match from the staff customer search (GET /s/customers). */
+export interface CustomerSearchResult {
+  customerId: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  companyId: string | null;
+  companyName: string | null;
+  locations: { companyLocationId: string; name: string; shipTo: Record<string, string | null> | null }[];
 }
 
 export interface VariantPricing {
@@ -80,6 +95,8 @@ export interface ShopifyGateway {
   getVariantPricing(buyer: Pick<BuyerContext, "companyLocationId" | "customerId">, variantId: string): Promise<VariantPricing | null>;
   createDraftOrder(input: DraftOrderInput): Promise<DraftOrderResult>;
   completeDraftOrder(draftOrderId: string, opts: { paymentPending: boolean }): Promise<CompleteDraftOrderResult>;
+  /** Find company contacts by name, email, phone or company name (staff "create quote on behalf"). */
+  searchCustomers(query: string, limit: number): Promise<CustomerSearchResult[]>;
   /** Best effort; must not throw if the draft order is already gone. */
   deleteDraftOrder(draftOrderId: string): Promise<void>;
 }
