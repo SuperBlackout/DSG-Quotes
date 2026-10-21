@@ -3,5 +3,30 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "typecheck": "echo 'backend agent: add tsc' ", "test": "echo 'backend agent: add tests'" }
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "prisma": "prisma",
+    "db:seed": "tsx prisma/seed.ts",
+    "graphql:validate": "tsx scripts/graphql-validate.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^6.19.3",
+    "@prisma/client": "^6.19.3",
+    "fastify": "^5.12.7",
+    "graphql": "^16.14.2",
+    "pg": "^8.23.1",
+    "shared": "workspace:*",
+    "tsx": "^4.23.15",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/pg": "^8.23.1",
+    "prisma": "^6.19.3",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
 }

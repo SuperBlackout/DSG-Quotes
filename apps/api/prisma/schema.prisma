@@ -1,6 +1,11 @@
-// Draft schema — backend agent owns this file after day 1.
+// DSG Quotes Prisma schema. Owned by the backend agent.
+//
+// engineType "client" = Rust-free query compiler + driver adapter (@prisma/adapter-pg). Chosen so the
+// build needs no engine binary downloads. Migrations in ./migrations are hand-maintained SQL kept in
+// sync with this file; test/schema-sync.test.ts fails if a model field has no matching column.
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  engineType = "client"
 }
 
 datasource db {
@@ -33,6 +38,16 @@ enum Channel {
   SMS
 }
 
+// Which collection a QuoteLine belongs to.
+//  CUSTOMER = the customer's own lines (draft, and the request as submitted). Never repriced by staff.
+//  STAFF    = the rep's editable working revision (draft-revision). Invisible to customers.
+//  VERSION  = frozen lines of a sent QuoteVersion (versionId set).
+enum LineSet {
+  CUSTOMER
+  STAFF
+  VERSION
+}
+
 // Shopify session storage for the app template
 model Session {
   id          String    @id
@@ -48,90 +63,120 @@ model Session {
 model Job {
   id                String   @id @default(cuid())
   shop              String
-  companyId         String   // gid://shopify/Company/...
-  companyLocationId String?  // gid://shopify/CompanyLocation/...
+  companyId         String // gid://shopify/Company/...
+  companyLocationId String? // gid://shopify/CompanyLocation/...
   name              String
   poNumber          String?
   siteAddress       String?
-  createdById       String   // gid://shopify/Customer/...
+  createdById       String // gid://shopify/Customer/...
   archived          Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   quotes            Quote[]
 
   @@index([shop, companyId])
+  @@index([shop, companyLocationId])
 }
 
 model Quote {
-  id                String      @id @default(cuid())
-  shop              String
-  number            Int         // displayed as Q-10482; unique per shop
-  jobId             String?
-  job               Job?        @relation(fields: [jobId], references: [id])
-  title             String
-  customerId        String      // owner (gid)
-  companyId         String?
-  companyLocationId String?
-  assignedRepId     String?
-  assignedRep       Staff?      @relation(fields: [assignedRepId], references: [id])
-  teamId            String?
-  status            QuoteStatus @default(DRAFT)
-  currentVersion    Int         @default(0) // 0 = customer draft, 1..n = sent revisions
-  notesToSales      String?
-  neededBy          DateTime?
-  shipToAddress     Json?
-  expiresAt         DateTime?
-  draftOrderId      String?     // set on ACCEPT → buy
-  orderId           String?     // set by orders/create webhook
-  watchers          Json        @default("[]") // extra people to notify
-  deletedAt         DateTime?
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
-  versions          QuoteVersion[]
-  lines             QuoteLine[]
-  messages          Message[]
-  events            Event[]
+  id                  String         @id @default(cuid())
+  shop                String
+  number              Int // displayed as Q-10482; unique per shop
+  jobId               String?
+  job                 Job?           @relation(fields: [jobId], references: [id])
+  title               String
+  customerId          String // owner (gid)
+  customerName        String         @default("")
+  customerEmail       String?
+  companyId           String?
+  companyName         String?
+  companyLocationId   String?
+  assignedRepId       String?
+  assignedRep         Staff?         @relation(fields: [assignedRepId], references: [id])
+  teamId              String?
+  createdByStaffId    String?
+  status              QuoteStatus    @default(DRAFT)
+  statusChangedAt     DateTime       @default(now())
+  currentVersion      Int            @default(0) // 0 = never sent, 1..n = sent revisions
+  poNumber            String?
+  notesToSales        String?
+  neededBy            DateTime?
+  shipToAddress       Json?
+  expiresAt           DateTime?
+  // Derived, refreshed whenever lines change (see domain/derived.ts)
+  total               Decimal        @default(0) @db.Decimal(12, 2) // customer-visible total
+  lineCount           Int            @default(0)
+  marginPct           Decimal?       @db.Decimal(7, 2) // staff working set
+  belowFloor          Boolean        @default(false)
+  // Staff working revision header (not visible to the customer)
+  workingFreight      Decimal        @default(0) @db.Decimal(12, 2)
+  workingExpiresAt    DateTime?
+  workingRepNote      String?
+  workingInternalNote String?
+  // Accept -> buy
+  draftOrderId        String? // set on checkout; cleared on reopen
+  draftOrderInvoiceUrl String?
+  draftOrderVersion   Int? // currentVersion the draft order was built from
+  draftOrderStatus    String? // last status seen from draft_orders/update
+  orderId             String? // set by orders/create webhook
+  watchers            Json           @default("[]") // extra people to notify
+  deletedAt           DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  versions            QuoteVersion[]
+  lines               QuoteLine[]
+  messages            Message[]
+  events              Event[]
 
   @@unique([shop, number])
+  @@index([shop, companyLocationId, status])
   @@index([shop, companyId, status])
   @@index([shop, assignedRepId, status])
+  @@index([shop, status, updatedAt])
 }
 
 model QuoteVersion {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   quoteId       String
-  quote         Quote    @relation(fields: [quoteId], references: [id])
+  quote         Quote       @relation(fields: [quoteId], references: [id])
   versionNo     Int
   sentById      String?
-  sentAt        DateTime @default(now())
-  subtotal      Decimal  @db.Decimal(12, 2)
-  discountTotal Decimal  @db.Decimal(12, 2) @default(0)
-  freight       Decimal  @db.Decimal(12, 2) @default(0)
-  taxEstimate   Decimal? @db.Decimal(12, 2)
-  total         Decimal  @db.Decimal(12, 2)
-  repNote       String?  // customer-visible job notes
-  internalNote  String?  // staff only
+  sentAt        DateTime    @default(now())
+  subtotal      Decimal     @db.Decimal(12, 2)
+  discountTotal Decimal     @default(0) @db.Decimal(12, 2)
+  freight       Decimal     @default(0) @db.Decimal(12, 2)
+  taxEstimate   Decimal?    @db.Decimal(12, 2)
+  total         Decimal     @db.Decimal(12, 2)
+  repNote       String? // customer-visible job notes
+  internalNote  String? // staff only
   lines         QuoteLine[]
 
   @@unique([quoteId, versionNo])
 }
 
 model QuoteLine {
-  id          String        @id @default(cuid())
-  quoteId     String
-  quote       Quote         @relation(fields: [quoteId], references: [id])
-  versionId   String?       // null = working draft lines
-  version     QuoteVersion? @relation(fields: [versionId], references: [id])
-  variantId   String        // gid://shopify/ProductVariant/...
-  sku         String?
-  title       String
-  qty         Int
-  listPrice   Decimal       @db.Decimal(12, 2) // dealer/catalog price snapshot
-  quotedPrice Decimal       @db.Decimal(12, 2)
-  cost        Decimal?      @db.Decimal(12, 2) // STAFF ONLY — never serialize to customers
-  lineNote    String?
-  addedBy     AuthorType    @default(CUSTOMER)
-  position    Int
+  id            String        @id @default(cuid())
+  quoteId       String
+  quote         Quote         @relation(fields: [quoteId], references: [id])
+  versionId     String? // set only for set = VERSION
+  version       QuoteVersion? @relation(fields: [versionId], references: [id])
+  set           LineSet       @default(CUSTOMER)
+  variantId     String // gid://shopify/ProductVariant/...
+  sku           String?
+  title         String
+  imageUrl      String?
+  qty           Int
+  listPrice     Decimal       @db.Decimal(12, 2) // dealer/catalog price snapshot
+  quotedPrice   Decimal       @db.Decimal(12, 2)
+  cost          Decimal?      @db.Decimal(12, 2) // STAFF ONLY: never serialize to customers
+  lineNote      String?
+  floorApproved Boolean       @default(false)
+  floorApprovedById String?
+  addedBy       AuthorType    @default(CUSTOMER)
+  position      Int
+
+  @@index([quoteId, set])
+  @@index([versionId])
 }
 
 model Message {
@@ -140,9 +185,10 @@ model Message {
   quote       Quote      @relation(fields: [quoteId], references: [id])
   authorType  AuthorType
   authorId    String?
+  authorName  String?
   body        String
   internal    Boolean    @default(false) // staff-only note
-  attachments Json       @default("[]")  // [{url, name, size, mime}]
+  attachments Json       @default("[]") // [{url, name, size, mime}]
   channel     Channel    @default(WEB)
   readAt      DateTime?
   createdAt   DateTime   @default(now())
@@ -151,34 +197,76 @@ model Message {
 }
 
 model NotificationPref {
-  id         String   @id @default(cuid())
-  shop       String
-  customerId String?
-  staffId    String?
-  event      String   // e.g. QUOTE_READY, NEW_MESSAGE, EXPIRING
-  email      Boolean  @default(true)
-  sms        Boolean  @default(false)
-  phone      String?
-  smsOptInAt DateTime?
-  quietStart String?  // "19:00"
-  quietEnd   String?  // "07:00"
-  timezone   String   @default("America/New_York")
+  id             String    @id @default(cuid())
+  shop           String
+  customerId     String?
+  staffId        String?
+  event          String // e.g. QUOTE_READY, NEW_MESSAGE, EXPIRING
+  email          Boolean   @default(true)
+  sms            Boolean   @default(false)
+  phone          String?
+  smsOptInAt     DateTime?
+  smsConsentText String? // exact consent copy shown at opt-in
+  quietStart     String? // "19:00"
+  quietEnd       String? // "07:00"
+  timezone       String    @default("America/New_York")
 
   @@unique([shop, customerId, staffId, event])
+  @@index([shop, customerId])
+}
+
+// Per-customer contact settings that are not per-event (notification email, extra watchers).
+model CustomerProfile {
+  id         String   @id @default(cuid())
+  shop       String
+  customerId String
+  email      String?
+  watchers   Json     @default("[]")
+  updatedAt  DateTime @updatedAt
+
+  @@unique([shop, customerId])
+}
+
+// Which draft "Add to Quote" targets, per customer.
+model ActiveQuote {
+  id         String   @id @default(cuid())
+  shop       String
+  customerId String
+  quoteId    String
+  updatedAt  DateTime @updatedAt
+
+  @@unique([shop, customerId])
+}
+
+// Monotonic per-shop counters (quote numbers).
+model Counter {
+  shop  String
+  key   String
+  value Int    @default(0)
+
+  @@id([shop, key])
+}
+
+// Dedupe for Shopify webhook redelivery (X-Shopify-Webhook-Id).
+model WebhookReceipt {
+  id         String   @id // X-Shopify-Webhook-Id
+  topic      String
+  receivedAt DateTime @default(now())
 }
 
 model Event {
-  id        String    @id @default(cuid())
-  quoteId   String
-  quote     Quote     @relation(fields: [quoteId], references: [id])
-  type      String    // QuoteEvent or NEW_MESSAGE
-  actorType AuthorType
-  actorId   String?
-  payload   Json      @default("{}")
+  id         String     @id @default(cuid())
+  quoteId    String
+  quote      Quote      @relation(fields: [quoteId], references: [id])
+  type       String // QuoteEvent or NEW_MESSAGE
+  actorType  AuthorType
+  actorId    String?
+  payload    Json       @default("{}")
   notifiedAt DateTime? // set by worker once fanned out
-  createdAt DateTime  @default(now())
+  createdAt  DateTime   @default(now())
 
   @@index([notifiedAt, createdAt])
+  @@index([quoteId, createdAt])
 }
 
 model Staff {
@@ -189,7 +277,9 @@ model Staff {
   email          String
   phone          String?
   teamId         String?
-  priceFloorPct  Decimal @db.Decimal(5, 2) @default(15)
+  priceFloorPct  Decimal @default(15) @db.Decimal(5, 2)
   isManager      Boolean @default(false)
   quotes         Quote[]
+
+  @@unique([shop, shopifyStaffId])
 }
