@@ -144,7 +144,9 @@ describe("POST /hooks/twilio-inbound", () => {
     const prefs = await ctx.prisma.notificationPref.findMany({ where: { customerId: CUSTOMER } });
     expect(prefs.length).toBeGreaterThan(0);
     expect(prefs.every((p) => p.smsOptInAt === null && p.sms === false)).toBe(true);
-    expect((await ctx.prisma.event.findMany({ where: { quoteId: q.id, type: "NOTIFICATION" } })).some((e) => (e.payload as any).status === "OPTED_OUT")).toBe(true);
+    // Source of truth + history
+    expect(await ctx.prisma.smsOptOut.findUniqueOrThrow({ where: { phone: PHONE } })).toMatchObject({ source: "twilio-stop" });
+    expect((await ctx.prisma.notificationLog.findMany({ where: { to: PHONE, status: "OPTED_OUT" } })).map((l) => l.quoteId)).toEqual([q.id]);
 
     ctx.sms.sent.length = 0;
     await ctx.prisma.event.create({ data: { quoteId: q.id, type: "SEND_REVISION", actorType: "STAFF", payload: {} } });
@@ -156,9 +158,31 @@ describe("POST /hooks/twilio-inbound", () => {
     expect(await ctx.prisma.message.count()).toBe(0);
   });
 
+  it("after STOP, saving the settings again does not re-consent: the number stays blocked until the customer texts START", async () => {
+    const { q } = await textedCustomer();
+    await sms({ From: PHONE, Body: "STOP" });
+    // What PUT /c/notification-prefs does on a re-save with the SMS box ticked: a fresh opt-in timestamp on every row.
+    await ctx.prisma.notificationPref.updateMany({ where: { customerId: CUSTOMER }, data: { sms: true, smsOptInAt: new Date(ctx.clock.now), phone: PHONE } });
+    ctx.sms.sent.length = 0;
+    await ctx.prisma.event.create({ data: { quoteId: q.id, type: "SEND_REVISION", actorType: "STAFF", payload: {} } });
+    await processBatch(ctx.deps);
+    expect(ctx.sms.sent).toHaveLength(0);
+    expect((await ctx.prisma.notificationLog.findMany({ where: { quoteId: q.id, channel: "SMS" }, orderBy: { createdAt: "asc" } })).map((l) => l.status)).toContain("SKIPPED_OPTED_OUT");
+    expect((await sms({ From: PHONE, Body: "hello?" })).body).toContain("could not match");
+    expect(await ctx.prisma.message.count()).toBe(0);
+
+    // START lifts the block (history stays), and the (re-given) consent then works again.
+    await sms({ From: PHONE, Body: "START" });
+    expect(await ctx.prisma.smsOptOut.count()).toBe(0);
+    expect(await ctx.prisma.notificationLog.count({ where: { to: PHONE, status: { in: ["OPTED_OUT", "OPTED_IN_START"] } } })).toBe(2);
+    await ctx.prisma.event.create({ data: { quoteId: q.id, type: "SEND_REVISION", actorType: "STAFF", payload: {} } });
+    await processBatch(ctx.deps);
+    expect(ctx.sms.sent).toHaveLength(1);
+  });
+
   it("STOP also clears staff texting rows", async () => {
     const rep = await mkStaff(ctx.prisma, { phone: REP_PHONE });
-    await mkStaffPrefs(ctx.prisma, rep.id, ["SUBMITTED"]);
+    await mkStaffPrefs(ctx.prisma, rep.id, ["QUOTE_RECEIVED"]);
     await sms({ From: REP_PHONE, Body: "stop" });
     expect((await ctx.prisma.notificationPref.findMany({ where: { staffId: rep.id } })).every((p) => p.smsOptInAt === null)).toBe(true);
   });
@@ -181,7 +205,7 @@ describe("POST /hooks/twilio-inbound", () => {
 
   it("a rep can answer by SMS", async () => {
     const rep = await mkStaff(ctx.prisma);
-    await mkStaffPrefs(ctx.prisma, rep.id, ["SUBMITTED"]);
+    await mkStaffPrefs(ctx.prisma, rep.id, ["QUOTE_RECEIVED"]);
     const q = await mkQuote(ctx.prisma, { assignedRepId: rep.id, status: "SUBMITTED" });
     await ctx.prisma.event.create({ data: { quoteId: q.id, type: "SUBMIT", actorType: "CUSTOMER", payload: {} } });
     await processBatch(ctx.deps);

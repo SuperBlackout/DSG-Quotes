@@ -23,6 +23,8 @@ export interface TemplateCtx {
   /** Where "reply to this email" lands; shown as a hint when email replies are possible. */
   canReplyByEmail: boolean;
   orderRef?: string | null;
+  /** floor_approval (managers only; never rendered for customers). No cost or margin figures: names and counts only. */
+  floor?: { requester: string; note: string | null; lines: { sku: string | null; title: string }[]; costUnknownCount: number };
 }
 
 export interface RenderedEmail {
@@ -122,6 +124,22 @@ function content(c: TemplateCtx): Content {
             lines: [`Thank you! Your order from "${c.title}" (${q}) is confirmed${c.orderRef ? ` (${c.orderRef})` : ""}.`],
             cta: "View your order",
           };
+    case "floor_approval": {
+      const n = c.floor?.lines.length ?? 0;
+      const unknown = c.floor?.costUnknownCount ?? 0;
+      const names = (c.floor?.lines ?? []).slice(0, 8).map((l) => `- ${l.sku ? `${l.sku} ` : ""}${l.title}`);
+      return {
+        subject: `Floor approval requested on ${q}`,
+        headline: `${c.floor?.requester ?? "A rep"} needs approval to send ${q}`,
+        lines: [
+          `${n} line${n === 1 ? " is" : "s are"} below the price floor${unknown ? ` (${unknown} with unknown cost)` : ""} on "${c.title}" for ${who(c)}.`,
+          ...names,
+          ...(n > names.length ? [`...and ${n - names.length} more.`] : []),
+        ],
+        quote: c.floor?.note ?? undefined,
+        cta: "Review and approve",
+      };
+    }
     case "expiring":
       return c.expired
         ? {
@@ -198,6 +216,9 @@ export function renderSms(c: TemplateCtx): string {
       break;
     case "ordered":
       body = forSales ? `DSG Quotes: order placed from ${q}.` : `DSG Quotes: your order from ${q} is confirmed.`;
+      break;
+    case "floor_approval":
+      body = `DSG Quotes: ${clip(c.floor?.requester ?? "A rep", 20)} requests floor approval on ${q}.`;
       break;
     case "expiring":
       body = c.expired ? `DSG Quotes: ${q} has expired.` : `DSG Quotes: ${q} expires${exp ? ` ${exp}` : " in 3 days"}.`;

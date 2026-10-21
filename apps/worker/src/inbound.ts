@@ -45,12 +45,23 @@ export async function recordInboundMessage(
   return message;
 }
 
+/** True when this number replied STOP (or was opted out another way) and has not texted START since. Never text such a number. */
+export async function isSmsOptedOut(db: Pick<Tx, "smsOptOut">, phone: string | null | undefined): Promise<boolean> {
+  if (!phone) return false;
+  return (await db.smsOptOut.findUnique({ where: { phone }, select: { phone: true } })) !== null;
+}
+
 /**
- * STOP: revoke SMS consent for every preference row holding this number (customers and staff). Clearing `smsOptInAt` is the
- * stored opt-out: the recipient resolver never texts a number without it, and re-subscribing requires the customer to opt in again
- * on the notification settings screen (new consent timestamp + wording). Returns the rows changed.
+ * STOP: record the opt-out in `SmsOptOut` (the source of truth: the sender checks it before every text, whatever the preference rows
+ * say) and revoke SMS consent on every preference row holding this number (customers and staff). A history row goes to
+ * `NotificationLog` (status OPTED_OUT). Re-subscribing needs an explicit START text (see `optInPhone`) AND fresh consent on the
+ * notification settings screen: saving the settings form alone never lifts a STOP. Returns the preference rows changed.
  */
-export async function optOutPhone(tx: Tx, shop: string, phone: string): Promise<number> {
+export async function optOutPhone(tx: Tx, shop: string, phone: string, opts: { source?: string; quoteId?: string | null; now?: Date } = {}): Promise<number> {
+  const at = opts.now ?? new Date();
+  const source = opts.source ?? "twilio-stop";
+  await tx.smsOptOut.upsert({ where: { phone }, create: { phone, at, source }, update: { at, source } });
+  await tx.notificationLog.create({ data: { quoteId: opts.quoteId ?? null, channel: "SMS", to: phone, status: "OPTED_OUT", providerId: null, createdAt: at } });
   const r = await tx.notificationPref.updateMany({ where: { shop, phone }, data: { sms: false, smsOptInAt: null } });
   // Staff whose texts go to Staff.phone (pref row carries no number of its own).
   const staff = await tx.staff.findMany({ where: { shop, phone }, select: { id: true } });
@@ -59,4 +70,14 @@ export async function optOutPhone(tx: Tx, shop: string, phone: string): Promise<
     n += (await tx.notificationPref.updateMany({ where: { shop, staffId: { in: staff.map((s) => s.id) } }, data: { sms: false, smsOptInAt: null } })).count;
   }
   return n;
+}
+
+/**
+ * START (UNSTOP/YES): the person explicitly asked to be texted again, so the number leaves `SmsOptOut` (history stays in
+ * `NotificationLog`, status OPTED_IN_START). Consent on the preference rows stays cleared: they must still opt in on the settings screen.
+ */
+export async function optInPhone(tx: Tx, phone: string, opts: { now?: Date } = {}): Promise<boolean> {
+  const removed = await tx.smsOptOut.deleteMany({ where: { phone } });
+  if (removed.count > 0) await tx.notificationLog.create({ data: { quoteId: null, channel: "SMS", to: phone, status: "OPTED_IN_START", providerId: null, createdAt: opts.now ?? new Date() } });
+  return removed.count > 0;
 }

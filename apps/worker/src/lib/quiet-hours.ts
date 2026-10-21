@@ -27,10 +27,11 @@ export function localMinutes(at: Date, tz: string): number {
 }
 
 /** Local calendar parts in `tz` (used by the 8:00 ET cron gate and its once-a-day marker). */
-export function localParts(at: Date, tz: string): { date: string; hour: number; minute: number } {
+export function localParts(at: Date, tz: string): { date: string; hour: number; minute: number; weekday: number } {
   const f = new Intl.DateTimeFormat("en-CA", { timeZone: safeTz(tz), hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   const p = Object.fromEntries(f.formatToParts(at).map((x) => [x.type, x.value]));
-  return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24, minute: Number(p.minute) };
+  const wd = new Intl.DateTimeFormat("en-US", { timeZone: safeTz(tz), weekday: "short" }).format(at);
+  return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24, minute: Number(p.minute), weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(wd) };
 }
 
 export interface QuietWindow {
