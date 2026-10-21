@@ -5,6 +5,7 @@
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "types": []
+    "types": ["@shopify/polaris-types"],
+    "declaration": false
   }
 }

@@ -1,0 +1,14 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "Open quote"
+handle = "open-quote"
+type = "ui_extension"
+
+  [[extensions.targeting]]
+  module = "./src/ActionExtension.tsx"
+  target = "admin.draft-order-details.action.render"
+
+  # Needed for shopify.query() (direct Admin API access) to read the draft order's tags.
+  [extensions.capabilities]
+  api_access = true
