@@ -285,8 +285,3 @@ export function statusBanner(q: CustomerQuote, now: Date = new Date()): StatusBa
       return { tone: "info", heading: "This quote was deleted", body: "", actions: [] };
   }
 }
-
-/** Messages that mean "purchase failed because of state" (API 409s) and should offer a fresh quote. */
-export function isNotPurchasableError(code: string): boolean {
-  return code === "NOT_PURCHASABLE";
-}
