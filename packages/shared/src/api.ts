@@ -11,7 +11,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List my company's quotes */
+        /**
+         * List my company's quotes
+         * @description `limit` may be up to 100. The storefront popover lists drafts with `status=DRAFT&limit=100`.
+         */
         get: operations["listCustomerQuotes"];
         put?: never;
         /** Create a draft quote */
@@ -143,7 +146,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** QUOTE_READY to ACCEPTED (current version) */
+        /**
+         * QUOTE_READY to ACCEPTED (current version)
+         * @description 409 `VERSION_MISMATCH` (with `details.currentVersion`) means staff sent a newer version than the one the
+         *     customer saw: the client must reload the quote and let the customer re-review the new version before
+         *     accepting again. It is never retried automatically.
+         */
         post: operations["acceptCustomerQuote"];
         delete?: never;
         options?: never;
@@ -230,9 +238,32 @@ export interface paths {
         put?: never;
         /**
          * Accept to buy. Requires ACCEPTED and not expired (isPurchasable); creates or reuses the draft order.
-         * @description Idempotent. Returns 409 NOT_PURCHASABLE if the quote is not ACCEPTED or has expired.
+         * @description Idempotent. Returns 409 `NOT_PURCHASABLE` if the quote is not ACCEPTED or has expired. The client shows the
+         *     error `message` and offers "Ask for a new quote", which calls `POST /c/quotes/{id}/duplicate` (new DRAFT with
+         *     prices re-snapshotted) and opens the copy.
          */
         post: operations["checkoutCustomerQuote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/c/quotes/{id}/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Printable PDF of the latest sent version (customer-safe, no cost or margin)
+         * @description Returns 404 `NOT_FOUND` until at least one version has been sent (DRAFT quotes have no PDF). Add `?version=N` for an earlier sent version. Served with
+         *     `Content-Disposition: inline; filename="Q-#####-vN.pdf"`.
+         */
+        get: operations["getCustomerQuotePdf"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -303,7 +334,12 @@ export interface paths {
         };
         /** Draft that "Add to Quote" targets (header chip) */
         get: operations["getActiveQuote"];
-        /** Choose the target draft */
+        /**
+         * Choose the target draft
+         * @description The storefront calls this after saving a draft from the cart (`POST /c/quotes/from-cart` with
+         *     `submit: false`) so the header chip follows the new draft. Allowed only for the caller's own DRAFT quotes
+         *     (or `quoteId: null` to clear).
+         */
         put: operations["setActiveQuote"];
         post?: never;
         delete?: never;
@@ -410,7 +446,12 @@ export interface paths {
         /**
          * Freeze working lines into version N+1 and move to QUOTE_READY
          * @description Returns 422 FLOOR_APPROVAL_REQUIRED (with `details.lineIds`) if any line is under the rep's
-         *     price floor and no manager approval exists.
+         *     price floor, or has unknown cost (`costUnknown`), and no manager approval exists for it. A line with unknown
+         *     cost can never be margin-checked, so it ALWAYS needs manager approval before send.
+         *
+         *     The new version number is `max(currentVersion, highest versions[].versionNo) + 1`
+         *     (also exposed as `StaffQuote.nextVersionNo`, which the "Send vN" button must use). The same call sets
+         *     `expiresAt` from the working expiry, else `QUOTE_DEFAULT_EXPIRY_DAYS` (14) from now.
          */
         post: operations["sendStaffRevision"];
         delete?: never;
@@ -428,7 +469,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Manager approval for lines under the price floor */
+        /**
+         * Manager approval for lines under the price floor or with unknown cost
+         * @description Requires role manager or admin (403 `FORBIDDEN` otherwise). Approving a `costUnknown` line is how it becomes sendable.
+         */
         post: operations["approveFloor"];
         delete?: never;
         options?: never;
@@ -490,6 +534,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/s/quotes/{id}/request-floor-approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask a manager to approve lines under the price floor (or with unknown cost)
+         * @description No status change. Writes a `FLOOR_APPROVAL_REQUESTED` row to `events` (payload: lineIds, note, requester) and
+         *     notifies every manager (and the assigned team's manager if any). A manager then calls `approve-floor`.
+         *     Safe to call again; each call notifies again.
+         */
+        post: operations["requestFloorApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/attachments/upload-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Signed upload URL for a staff message attachment */
+        post: operations["createStaffAttachmentUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/s/reports/summary": {
         parameters: {
             query?: never;
@@ -507,6 +590,190 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/s/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in staff member (role, teams, effective price floor) */
+        get: operations["getStaffMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/staff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Staff members (reps, managers) for assignment pickers and settings */
+        get: operations["listStaff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/staff/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Change a staff member's role, teams, personal price floor or active flag (manager or admin only) */
+        put: operations["updateStaffMember"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Teams */
+        get: operations["listTeams"];
+        put?: never;
+        /** Create a team (manager or admin only) */
+        post: operations["createTeam"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/teams/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Rename a team or replace its members (manager or admin only) */
+        put: operations["updateTeam"];
+        post?: never;
+        /**
+         * Delete a team (manager or admin only)
+         * @description Quotes assigned to the team keep their rep but lose `teamId`; routing rules that point at the team are
+         *     removed. A team that is the `defaultTeamId` in settings returns 400 `BAD_REQUEST` until the default is changed.
+         */
+        delete: operations["deleteTeam"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Default price floor and routing rules */
+        get: operations["getStaffSettings"];
+        /** Replace settings (manager or admin only) */
+        put: operations["putStaffSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/saved-replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Saved replies available to the signed-in staff member (shared plus personal) */
+        get: operations["listSavedReplies"];
+        /**
+         * Replace the full list of saved replies
+         * @description Replaces the caller's personal replies and, for managers and admins only, the shared ones
+         *     (`shared: true` items from a rep are rejected with 403 `FORBIDDEN`). Items without `id` are created.
+         */
+        put: operations["putSavedReplies"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/customers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find a customer (and company location) to create a quote on their behalf
+         * @description Matches name, email, phone and company name. Minimum 2 characters in `q`.
+         */
+        get: operations["searchStaffCustomers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/shopify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Shopify webhook receiver (HMAC verified). One URL for every subscribed topic.
+         * @description Verify `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the raw body with `SHOPIFY_API_SECRET`) before parsing;
+         *     invalid signature returns 401 `UNAUTHENTICATED`. Dispatch on `X-Shopify-Topic`:
+         *
+         *     - `orders/create`: if the order carries a `quote:Q-#####` tag, `transition(ORDER_PLACED)`; otherwise ignore.
+         *     - `draft_orders/update`: sync draft order state (invoice sent, completed) for the linked quote.
+         *     - `app/uninstalled`: mark the shop uninstalled and stop processing for it.
+         *     - `customers/data_request`, `customers/redact`, `shop/redact`: compliance topics, must return 200.
+         *
+         *     Idempotent on `X-Shopify-Webhook-Id` (a repeated id returns 200 and does nothing). Respond 200 within 5 seconds;
+         *     do slow work asynchronously. Unknown topics return 200.
+         */
+        post: operations["hookShopify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/hooks/email-inbound": {
         parameters: {
             query?: never;
@@ -516,7 +783,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Inbound email reply (provider signature verified). Becomes a Message with channel EMAIL. */
+        /**
+         * Inbound email reply (provider signature verified). Becomes a Message with channel EMAIL.
+         * @description Served from `apps/api`; implemented and owned by the notifications agent.
+         */
         post: operations["hookEmailInbound"];
         delete?: never;
         options?: never;
@@ -533,7 +803,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Inbound SMS (X-Twilio-Signature verified). Handles STOP/HELP, else Message with channel SMS. */
+        /**
+         * Inbound SMS (X-Twilio-Signature verified). Handles STOP/HELP, else Message with channel SMS.
+         * @description Served from `apps/api`; implemented and owned by the notifications agent.
+         */
         post: operations["hookTwilioInbound"];
         delete?: never;
         options?: never;
@@ -550,6 +823,11 @@ export interface components {
              * @description Stable machine code. Used values: BAD_REQUEST, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND,
              *     INVALID_TRANSITION, NOT_PURCHASABLE, VERSION_MISMATCH, NOT_EDITABLE, FLOOR_APPROVAL_REQUIRED,
              *     VALIDATION_FAILED, RATE_LIMITED, INTERNAL.
+             *
+             *     Client handling: `NOT_PURCHASABLE` (409, checkout) means the quote is not ACCEPTED or has expired; show the
+             *     message and offer "Ask for a new quote" (duplicate). `VERSION_MISMATCH` (409, accept) means a newer version
+             *     was sent; reload and re-review the new version. `RATE_LIMITED` is reserved: rate limiting is deferred and
+             *     the API does not emit it yet.
              * @example INVALID_TRANSITION
              */
             code: string;
@@ -561,6 +839,12 @@ export interface components {
         };
         /** @example 1234.50 */
         Money: string;
+        /**
+         * @description ISO 4217 currency of every Money value on the same quote (summary, versions, lines, staff fields).
+         *     Money itself stays a plain decimal string; there is never a mix of currencies within one quote.
+         * @example USD
+         */
+        CurrencyCode: string;
         /** @enum {string} */
         QuoteStatus: "DRAFT" | "SUBMITTED" | "IN_REVIEW" | "QUOTE_READY" | "CHANGES_REQUESTED" | "ACCEPTED" | "ORDERED" | "EXPIRED" | "DECLINED" | "ARCHIVED";
         /** @enum {string} */
@@ -610,6 +894,7 @@ export interface components {
             listPrice: components["schemas"]["Money"];
             quotedPrice: components["schemas"]["Money"];
             lineTotal: components["schemas"]["Money"];
+            /** @description Customer-visible note on this line (written by the customer or the rep). */
             lineNote?: string | null;
             position: number;
         };
@@ -644,6 +929,8 @@ export interface components {
         /** @description Server-computed so front-ends never re-implement the state machine. */
         CustomerQuoteActions: {
             canEditLines: boolean;
+            /** @description Job, PO, needed-by, ship-to, notes and watchers may be changed via PATCH /c/quotes/{id} (DRAFT). */
+            canEditHeader: boolean;
             canSubmit: boolean;
             canWithdraw: boolean;
             canAccept: boolean;
@@ -666,10 +953,19 @@ export interface components {
             job?: components["schemas"]["JobRef"] | null;
             currentVersion?: number;
             lineCount: number;
+            currencyCode: components["schemas"]["CurrencyCode"];
             total: components["schemas"]["Money"];
+            /**
+             * @description Total of the sent version before the current one; null when only one version has been sent.
+             * @example 1234.50
+             */
+            previousTotal?: string | null;
             /** Format: date-time */
             expiresAt?: string | null;
             ownerName?: string;
+            assignedRepName?: string | null;
+            /** @description Customer-visible messages (never internal notes) not yet read by this customer. */
+            unreadCount: number;
             orderId?: string | null;
             /** Format: date-time */
             updatedAt: string;
@@ -682,7 +978,6 @@ export interface components {
             shipTo?: components["schemas"]["Address"] | null;
             notesToSales?: string | null;
             watchers?: string[];
-            assignedRepName?: string | null;
             /** @description Customer's working draft lines when DRAFT, otherwise the latest sent version's lines. */
             lines: components["schemas"]["CustomerQuoteLine"][];
             /** @description Sent revisions only, ascending. */
@@ -740,6 +1035,10 @@ export interface components {
                 /** @enum {string} */
                 mode: "existing";
                 quoteId: string;
+                poNumber?: string;
+                /** Format: date */
+                neededBy?: string;
+                notesToSales?: string;
             };
             /**
              * @description true = "Submit to sales", false = "Save as draft".
@@ -747,7 +1046,8 @@ export interface components {
              */
             submit: boolean;
             /**
-             * @description Informational; the storefront block clears the cart after a 2xx.
+             * @description Informational only. The API ignores it and never touches the Shopify cart; the storefront block
+             *     clears the cart itself after a 2xx response.
              * @default false
              */
             emptyCart: boolean;
@@ -785,10 +1085,38 @@ export interface components {
             email: boolean;
             sms: boolean;
         };
+        /**
+         * @description Customer-facing notification keys (the full set). QUOTE_RECEIVED = we got your request (SUBMITTED),
+         *     QUOTE_READY = a version was sent, NEW_MESSAGE = staff message, EXPIRING = 3-day reminder,
+         *     ORDERED = order placed, ACCEPTED = acceptance confirmation, WEEKLY_SUMMARY = weekly digest of open quotes.
+         *     CHANGES_REQUESTED is staff-only and is not a customer preference.
+         * @enum {string}
+         */
+        NotificationEvent: "QUOTE_RECEIVED" | "QUOTE_READY" | "NEW_MESSAGE" | "EXPIRING" | "ORDERED" | "ACCEPTED" | "WEEKLY_SUMMARY";
+        /**
+         * @description The literal `all` (every quote) or a job id (`JobRef.id`) to follow only that job's quotes.
+         * @example all
+         */
+        WatcherScope: string;
+        Watcher: {
+            /** Format: email */
+            email: string;
+            name?: string | null;
+            /** @example Project manager */
+            role?: string | null;
+            scope: components["schemas"]["WatcherScope"];
+            channels: components["schemas"]["NotificationChannelPref"];
+        };
         NotificationPrefs: {
-            /** @description Keyed by event, e.g. QUOTE_READY, NEW_MESSAGE, ACCEPTED, ORDERED, EXPIRING, CHANGES_REQUESTED. */
+            /** @description One entry per NotificationEvent. PUT replaces all of them. */
             events: {
-                [key: string]: components["schemas"]["NotificationChannelPref"];
+                QUOTE_RECEIVED: components["schemas"]["NotificationChannelPref"];
+                QUOTE_READY: components["schemas"]["NotificationChannelPref"];
+                NEW_MESSAGE: components["schemas"]["NotificationChannelPref"];
+                EXPIRING: components["schemas"]["NotificationChannelPref"];
+                ORDERED: components["schemas"]["NotificationChannelPref"];
+                ACCEPTED: components["schemas"]["NotificationChannelPref"];
+                WEEKLY_SUMMARY: components["schemas"]["NotificationChannelPref"];
             };
             /** Format: email */
             email: string;
@@ -806,7 +1134,8 @@ export interface components {
             quietEnd?: string | null;
             /** @example America/New_York */
             timezone?: string;
-            watchers?: string[];
+            /** @description People who also receive the selected channels, for all quotes or one job. */
+            watchers?: components["schemas"]["Watcher"][];
         };
         StaffQuoteLine: {
             id: string;
@@ -823,8 +1152,12 @@ export interface components {
             lineTotal: components["schemas"]["Money"];
             /** @description (quotedPrice - cost) / quotedPrice * 100 */
             marginPct?: number | null;
+            /** @description Under the effective price floor, or cost unknown. */
             belowFloor?: boolean;
+            /** @description Cost could not be read from inventory. Margin is null and the line needs manager approval before send. */
+            costUnknown?: boolean;
             floorApproved?: boolean;
+            /** @description Customer-visible note on the line (also shown as `CustomerQuoteLine.lineNote`). There is no per-line internal note; use the quote's internalNote. */
             lineNote?: string | null;
             /** @enum {string} */
             addedBy?: "CUSTOMER" | "STAFF" | "SYSTEM";
@@ -864,6 +1197,100 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        /**
+         * @description rep = sells and replies; manager = also approves floor exceptions and edits teams/settings; admin = manager plus app install settings.
+         * @enum {string}
+         */
+        StaffRole: "rep" | "manager" | "admin";
+        StaffMe: {
+            id: string;
+            name: string;
+            /** Format: email */
+            email: string;
+            role: components["schemas"]["StaffRole"];
+            teamIds: string[];
+            /** @description Personal override; null means use the default from settings. */
+            priceFloorPct?: number | null;
+            /** @description Minimum margin percent below which a line needs manager approval (personal override, else the default). */
+            effectivePriceFloorPct: number;
+            canApproveFloor?: boolean;
+            canEditSettings?: boolean;
+        };
+        StaffMember: {
+            id: string;
+            name: string;
+            /** Format: email */
+            email: string;
+            role: components["schemas"]["StaffRole"];
+            teamIds: string[];
+            priceFloorPct?: number | null;
+            active: boolean;
+        };
+        UpdateStaffRequest: {
+            role?: components["schemas"]["StaffRole"];
+            teamIds?: string[];
+            priceFloorPct?: number | null;
+            active?: boolean;
+        };
+        Team: {
+            id: string;
+            name: string;
+            memberIds: string[];
+        };
+        TeamInput: {
+            name: string;
+            memberIds?: string[];
+        };
+        /** @description Auto-assign new SUBMITTED quotes from this company. Provide repId, teamId or both (rep wins for ownership, team for visibility). */
+        RoutingRule: {
+            id?: string;
+            /** @description gid://shopify/Company/... */
+            companyId: string;
+            readonly companyName?: string | null;
+            repId?: string | null;
+            teamId?: string | null;
+        };
+        StaffSettings: {
+            /** @description Default minimum margin percent for lines when a rep has no personal floor. */
+            defaultPriceFloorPct: number;
+            routing: {
+                /** @description Team that receives quotes no rule matches. */
+                defaultTeamId?: string | null;
+                /** @description When true, `rules` are applied on SUBMIT; when false they are stored but ignored. */
+                autoAssignByCompany: boolean;
+                rules: components["schemas"]["RoutingRule"][];
+            };
+        };
+        SavedReply: {
+            id: string;
+            title: string;
+            body: string;
+            /** @description true = visible to all staff (managed by managers). */
+            shared: boolean;
+        };
+        SavedReplyInput: {
+            id?: string;
+            title: string;
+            body: string;
+            /** @default false */
+            shared: boolean;
+        };
+        StaffCustomerLocation: {
+            companyLocationId: string;
+            name: string;
+            shipTo?: components["schemas"]["Address"] | null;
+        };
+        StaffCustomer: {
+            /** @description gid://shopify/Customer/... */
+            customerId: string;
+            name: string;
+            /** Format: email */
+            email: string;
+            phone?: string | null;
+            companyId?: string | null;
+            companyName?: string | null;
+            locations?: components["schemas"]["StaffCustomerLocation"][];
+        };
         StaffQuoteSummary: {
             id: string;
             number: number;
@@ -880,8 +1307,12 @@ export interface components {
             assignedRepName?: string | null;
             teamId?: string | null;
             currentVersion?: number;
+            /** @description Number of line items (lines, not units) shown in inbox rows. */
+            itemCount: number;
+            currencyCode: components["schemas"]["CurrencyCode"];
             total: components["schemas"]["Money"];
             marginPct?: number | null;
+            /** @description true if any line is under the floor or has unknown cost and is not yet approved. */
             belowFloor?: boolean;
             /** Format: date-time */
             expiresAt?: string | null;
@@ -902,6 +1333,15 @@ export interface components {
         };
         StaffQuote: components["schemas"]["StaffQuoteSummary"] & {
             customerId?: string;
+            customerContactName?: string | null;
+            customerContactPhone?: string | null;
+            /**
+             * @description Company payment terms from Shopify, read only.
+             * @example Net 30
+             */
+            paymentTerms?: string | null;
+            /** @description max(currentVersion, highest versions[].versionNo) + 1; the N in "Send vN". */
+            readonly nextVersionNo?: number;
             companyId?: string | null;
             companyLocationId?: string | null;
             job?: components["schemas"]["JobRef"] | null;
@@ -918,12 +1358,20 @@ export interface components {
             /** @description Editable working revision (what Save draft stores). */
             workingLines: components["schemas"]["StaffQuoteLine"][];
             workingFreight?: components["schemas"]["Money"];
+            /**
+             * Format: date-time
+             * @description Expiry saved with the working revision; becomes `expiresAt` when the revision is sent.
+             */
+            workingExpiresAt?: string | null;
+            /** @description Customer-visible job notes (becomes `repNote` on send). */
             workingRepNote?: string | null;
+            /** @description Staff only; never copied to a customer shape. */
             workingInternalNote?: string | null;
             versions: components["schemas"]["StaffQuoteVersion"][];
             messages: components["schemas"]["StaffMessage"][];
             events?: components["schemas"]["StaffQuoteEvent"][];
         };
+        /** @description Use `GET /s/customers?q=` to find `customerId` and `companyLocationId`. */
         StaffCreateQuoteRequest: {
             customerId: string;
             companyLocationId?: string;
@@ -934,12 +1382,20 @@ export interface components {
             /** @default false */
             submit: boolean;
         };
+        /**
+         * @description There is no variant price/cost lookup endpoint (decision: cost never needs to reach the client before a save).
+         *     When a line without `id` is saved through `PUT /s/quotes/{id}/draft-revision`, the server snapshots the buyer's
+         *     contextual `listPrice` and the inventory unit `cost` for that `variantId` (rule 6) and returns them, with
+         *     `marginPct`, `belowFloor` and `costUnknown`, on the updated `workingLines`. The admin app therefore saves right
+         *     after the resource picker adds a product and renders cost and margin from the response.
+         */
         StaffLineInput: {
             /** @description Existing working line id; omit for a new line. */
             id?: string;
             variantId: string;
             qty: number;
             quotedPrice: components["schemas"]["Money"];
+            /** @description Customer-visible; shown on the line in every sent version. */
             lineNote?: string | null;
         };
         DraftRevisionRequest: {
@@ -953,6 +1409,15 @@ export interface components {
             internalNote?: string | null;
         };
         StaffSummary: {
+            /** @description Badge counts for the inbox tabs, same filters as `GET /s/quotes?tab=`. */
+            tabCounts: {
+                needs_response: number;
+                unassigned: number;
+                waiting_customer: number;
+                accepted: number;
+                expiring: number;
+                all: number;
+            };
             needsResponse: number;
             unassigned?: number;
             openValue: components["schemas"]["Money"];
@@ -1000,6 +1465,7 @@ export interface components {
         QuoteId: string;
         LineId: string;
         Cursor: string;
+        /** @description Page size, 1 to 100 (default 25). */
         Limit: number;
     };
     requestBodies: never;
@@ -1013,9 +1479,10 @@ export interface operations {
             query?: {
                 status?: components["schemas"]["QuoteStatus"];
                 jobId?: string;
-                /** @description Free-text search over number, title, job, PO. */
+                /** @description Free-text search over number (Q-##### or digits), title, job, PO. */
                 q?: string;
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1402,10 +1869,37 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getCustomerQuotePdf: {
+        parameters: {
+            query?: {
+                /** @description Sent version number; defaults to the current version. */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PDF document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listCustomerMessages: {
         parameters: {
             query?: {
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1583,10 +2077,16 @@ export interface operations {
         parameters: {
             query?: {
                 tab?: "needs_response" | "unassigned" | "waiting_customer" | "accepted" | "expiring" | "all";
+                /** @description A staff id, `me` (the signed-in rep) or `unassigned` (no rep and no team). */
                 rep?: string;
                 team?: string;
+                /**
+                 * @description Free text over customer, company, job, PO and title. Also matches the display number, with or without
+                 *     the prefix and case-insensitively: `Q-10482`, `q10482` and `10482` all find quote 10482.
+                 */
                 q?: string;
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1792,6 +2292,7 @@ export interface operations {
         parameters: {
             query?: {
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, 1 to 100 (default 25). */
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1847,6 +2348,56 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    requestFloorApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Omit to request approval for every flagged line. */
+                    lineIds?: string[];
+                    note?: string;
+                };
+            };
+        };
+        responses: {
+            200: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createStaffAttachmentUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UploadUrlRequest"];
+            };
+        };
+        responses: {
+            /** @description Upload target */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadUrl"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getStaffSummary: {
         parameters: {
             query?: never;
@@ -1863,6 +2414,338 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StaffSummary"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getStaffMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current staff member */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaffMe"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listStaff: {
+        parameters: {
+            query?: {
+                active?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Staff */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["StaffMember"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateStaffMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateStaffRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaffMember"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listTeams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Teams */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Team"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createTeam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateTeam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamInput"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Team"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteTeam: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getStaffSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaffSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putStaffSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StaffSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaffSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSavedReplies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved replies */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SavedReply"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putSavedReplies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    items: components["schemas"]["SavedReplyInput"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SavedReply"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    searchStaffCustomers: {
+        parameters: {
+            query: {
+                q: string;
+                /** @description Page size, 1 to 100 (default 25). */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Matches */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["StaffCustomer"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    hookShopify: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Shopify-Topic": string;
+                "X-Shopify-Shop-Domain": string;
+                "X-Shopify-Webhook-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid HMAC */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             default: components["responses"]["Error"];
