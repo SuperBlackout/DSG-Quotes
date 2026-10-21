@@ -44,7 +44,7 @@ test('move cart to a NEW quote as draft, then empty the cart only after the 2xx'
   assert.ok(page.state.calls.find((c) => c.key === 'PUT /apps/quotes/c/active-quote'), 'drafts become the active quote');
 });
 
-test('Submit to sales with an existing draft: header fields PATCHed first, cart kept when unchecked', async () => {
+test('Submit to sales with an existing draft: header fields ride in the from-cart target, no PATCH, cart kept when unchecked', async () => {
   const page = await boot(CART_HTML, SCRIPTS);
   await until(() => /26 items/.test(page.d.body.textContent));
   page.d.querySelector('input[value=existing]').click();
@@ -53,22 +53,60 @@ test('Submit to sales with an existing draft: header fields PATCHed first, cart 
   assert.equal(sel.value, 'q1', 'active quote preselected');
   assert.match(sel.options[0].textContent, /Q-10482 · PO 4471/);
   sel.value = 'q2';
+  fill(page, input(page, 'PO #'), 'PO-9');
   fill(page, input(page, 'Needed by'), '2026-12-01');
+  fill(page, input(page, 'Note to sales'), 'Deliver to dock B');
   page.d.querySelector('.dsg-check input').click(); // uncheck
   btn(page, 'Submit to sales').click();
   await until(() => page.d.querySelector('.dsg-mc__done'));
 
   const order = page.calls();
-  assert.deepEqual(page.state.calls.find((c) => c.method === 'PATCH').body, { neededBy: '2026-12-01' });
-  assert.ok(order.indexOf('PATCH /apps/quotes/c/quotes/q2') < order.indexOf('POST /apps/quotes/c/quotes/from-cart'));
+  assert.equal(order.some((k) => k.startsWith('PATCH ')), false, 'no PATCH-first workaround any more');
   const fc = page.state.calls.find((c) => c.key === 'POST /apps/quotes/c/quotes/from-cart');
-  assert.deepEqual(fc.body.target, { mode: 'existing', quoteId: 'q2' });
+  assert.deepEqual(fc.body.target, { mode: 'existing', quoteId: 'q2', poNumber: 'PO-9', neededBy: '2026-12-01', notesToSales: 'Deliver to dock B' });
   assert.equal(fc.body.submit, true);
   assert.equal(fc.body.emptyCart, false);
   assert.equal(order.includes('POST /cart/clear.js'), false);
   assert.equal(page.state.cart.items.length, 2);
   assert.match(page.d.body.textContent, /Sent to sales/);
   assert.equal(order.includes('PUT /apps/quotes/c/active-quote'), false, 'submitted quotes are not the add-to target');
+});
+
+test('existing draft with blank header fields sends none of them, so the draft note is not overwritten', async () => {
+  const page = await boot(CART_HTML, SCRIPTS);
+  await until(() => /26 items/.test(page.d.body.textContent));
+  page.d.querySelector('input[value=existing]').click();
+  await until(() => page.d.querySelectorAll('select option').length === 2);
+  btn(page, 'Save as draft').click();
+  await until(() => page.d.querySelector('.dsg-mc__done'));
+  const fc = page.state.calls.find((c) => c.key === 'POST /apps/quotes/c/quotes/from-cart');
+  assert.deepEqual(fc.body.target, { mode: 'existing', quoteId: 'q1' });
+  assert.equal(page.state.quotes[0].notesToSales, 'Keep the existing note');
+  assert.equal(page.calls().some((k) => k.startsWith('PATCH ')), false);
+  assert.deepEqual(page.state.active, { quoteId: 'q1', number: 10482, title: 'Exam rooms', lineCount: 6 });
+  assert.ok(page.calls().includes('PUT /apps/quotes/c/active-quote'), 'draft saved: chip follows via PUT active-quote');
+});
+
+test('draft list is requested with status=DRAFT&limit=100', async () => {
+  const page = await boot(CART_HTML, SCRIPTS);
+  await until(() => /26 items/.test(page.d.body.textContent));
+  page.d.querySelector('input[value=existing]').click();
+  await until(() => page.d.querySelectorAll('select option').length === 2);
+  const list = page.state.calls.find((c) => c.key === 'GET /apps/quotes/c/quotes');
+  assert.equal(list.search, '?status=DRAFT&limit=100');
+});
+
+test('emptyCart stays client-side: a non-2xx from-cart never clears the cart', async () => {
+  const state = defaultState();
+  state.fail.push({ match: /POST \/apps\/quotes\/c\/quotes\/from-cart/, status: 422, body: { code: 'VALIDATION_FAILED', message: 'Bad' } });
+  const page = await boot(CART_HTML, SCRIPTS, state);
+  await until(() => /26 items/.test(page.d.body.textContent));
+  page.d.querySelector('input[value=existing]').click();
+  await until(() => page.d.querySelectorAll('select option').length === 2);
+  btn(page, 'Save as draft').click();
+  await until(() => page.d.querySelector('.dsg-error:not([hidden])'));
+  assert.equal(page.calls().includes('POST /cart/clear.js'), false);
+  assert.equal(page.state.cart.items.length, 2);
 });
 
 test('error state: API rejects, cart is NOT cleared, form stays editable', async () => {
