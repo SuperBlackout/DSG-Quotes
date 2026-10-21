@@ -56,7 +56,6 @@ test('every proxy call made by all three blocks exists in docs/openapi.yaml and 
   await until(() => /26 items/.test(cart.d.body.textContent));
   cart.d.querySelector('input[value=existing]').click();
   await until(() => cart.d.querySelectorAll('select option').length === 3);
-  cart.d.querySelector('.dsg-field--half input').value = 'PO1';
   [...cart.d.querySelectorAll('button')].find((b) => b.textContent === 'Save as draft').click();
   await until(() => cart.d.querySelector('.dsg-mc__done'));
 
@@ -71,9 +70,50 @@ test('every proxy call made by all three blocks exists in docs/openapi.yaml and 
   }
   const used = new Set(calls.map((k) => k.replace(/q\d+/, ':id')));
   for (const want of ['GET /apps/quotes/c/quotes', 'GET /apps/quotes/c/active-quote', 'PUT /apps/quotes/c/active-quote',
-    'POST /apps/quotes/c/quotes', 'POST /apps/quotes/c/:id/lines'.replace('c/:id', 'c/quotes/:id'), 'POST /apps/quotes/c/quotes/from-cart', 'PATCH /apps/quotes/c/quotes/:id']) {
+    'POST /apps/quotes/c/quotes', 'POST /apps/quotes/c/:id/lines'.replace('c/:id', 'c/quotes/:id'), 'POST /apps/quotes/c/quotes/from-cart']) {
     assert.ok(used.has(want), 'exercised: ' + want);
   }
+});
+
+// Property names of FromCartRequest.target (both branches) and of the request itself, read from the spec text.
+function fromCartShape() {
+  const i = spec.findIndex((l) => /^    FromCartRequest:/.test(l));
+  const block = [];
+  for (let j = i + 1; j < spec.length && !/^    \S/.test(spec[j]); j++) block.push(spec[j]);
+  const props = (from) => { const out = []; for (let j = from; j < block.length; j++) { const m = /^ {10,14}(\w+):\s/.exec(block[j]); if (m) out.push(m[1]); } return out; };
+  const top = block.filter((l) => /^ {8}(\w+):/.test(l)).map((l) => /^ {8}(\w+):/.exec(l)[1]);
+  const existingAt = block.findIndex((l) => /required: \[mode, quoteId\]/.test(l));
+  const existingProps = [];
+  for (let j = existingAt; j < block.length && !/^ {8}submit:/.test(block[j]); j++) { const m = /^ {16}(\w+):/.exec(block[j]); if (m) existingProps.push(m[1]); }
+  return { top, existingProps };
+}
+
+test('from-cart request bodies only use fields of FromCartRequest (existing mode carries the header fields)', async () => {
+  const shape = fromCartShape();
+  for (const k of ['cartLines', 'target', 'submit', 'emptyCart']) assert.ok(shape.top.includes(k), 'spec has ' + k);
+  for (const k of ['mode', 'quoteId', 'poNumber', 'neededBy', 'notesToSales']) assert.ok(shape.existingProps.includes(k), 'spec existing target has ' + k);
+  const state = defaultState();
+  const cart = await boot(CART_HTML, ['dsg-move-cart.js'], state);
+  await until(() => /26 items/.test(cart.d.body.textContent));
+  cart.d.querySelector('input[value=existing]').click();
+  await until(() => cart.d.querySelectorAll('select option').length === 2);
+  const f = (label, v) => { const e = [...cart.d.querySelectorAll('label.dsg-field')].find((l) => l.firstChild.textContent === label).querySelector('input,textarea'); e.value = v; e.dispatchEvent(new cart.w.Event('input', { bubbles: true })); };
+  f('PO #', 'P1'); f('Needed by', '2027-01-02'); f('Note to sales', 'n');
+  [...cart.d.querySelectorAll('button')].find((b) => b.textContent === 'Save as draft').click();
+  await until(() => cart.d.querySelector('.dsg-mc__done'));
+  const fc = state.calls.find((c) => c.key === 'POST /apps/quotes/c/quotes/from-cart');
+  for (const k of Object.keys(fc.body)) assert.ok(shape.top.includes(k), 'unknown request key ' + k);
+  for (const k of Object.keys(fc.body.target)) assert.ok(shape.existingProps.includes(k), 'unknown target key ' + k);
+  assert.equal(fc.body.target.mode, 'existing');
+  assert.equal(fc.body.cartLines.length > 0 && fc.body.cartLines.every((l) => /^gid:\/\/shopify\/ProductVariant\/\d+$/.test(l.variantId) && l.qty > 0), true);
+  assert.match(fc.body.target.neededBy, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(state.calls.some((c) => c.method === 'PATCH'), false);
+});
+
+test('spec allows limit up to 100 on GET /c/quotes (what the blocks ask for)', () => {
+  const text = spec.join('\n');
+  assert.match(text, /name: limit[\s\S]{0,200}maximum: 100/);
+  assert.match(text, /status=DRAFT&limit=100/);
 });
 
 test('no frameworks or external hosts: assets only touch same-origin paths', () => {

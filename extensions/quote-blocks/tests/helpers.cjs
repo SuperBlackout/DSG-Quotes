@@ -10,7 +10,7 @@ const read = (f) => fs.readFileSync(path.join(ASSETS, f), 'utf8');
 function quote(over) {
   return Object.assign({
     id: 'q1', number: 10482, displayNumber: 'Q-10482', title: 'Exam rooms', status: 'DRAFT', waitingOn: 'none',
-    job: { id: 'j1', name: 'Lakeview Clinic', poNumber: '4471' }, currentVersion: 0, lineCount: 6, total: '3912.00',
+    job: { id: 'j1', name: 'Lakeview Clinic', poNumber: '4471' }, notesToSales: 'Keep the existing note', currentVersion: 0, lineCount: 6, total: '3912.00',
     updatedAt: '2026-10-01T00:00:00Z', ownerName: 'Dana', actions: {}, lines: [], versions: [], messages: []
   }, over || {});
 }
@@ -84,6 +84,8 @@ function makeServer(state) {
       } else {
         q = state.quotes.find((x) => x.id === body.target.quoteId);
         if (!q) return res(404, { code: 'NOT_FOUND', message: 'Quote not found' });
+        // contract 0.2.0: header fields overwrite only when present
+        for (const k of ['poNumber', 'neededBy', 'notesToSales']) if (body.target[k] !== undefined) q[k] = body.target[k];
         if (body.submit) q.status = 'SUBMITTED';
       }
       return res(201, q);
