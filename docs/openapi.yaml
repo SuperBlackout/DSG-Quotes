@@ -30,6 +30,16 @@ info:
 
     **Staff (`/s`) routes** use the Shopify admin session token (embedded app).
 
+    **Notes.** `lineNote` (on a line, both customer and staff shapes) is customer-visible: the customer writes it on
+    their draft and the rep may edit it on the working revision. `internalNote` (quote level, staff only) is private
+    and is never copied to any `Customer*` shape, email, SMS or PDF. There is no per-line internal note.
+
+    **Rate limiting is deferred.** The API does not rate limit in this revision; `RATE_LIMITED` is reserved.
+
+    **Webhooks and inbound hooks** (`/webhooks/shopify`, `/hooks/email-inbound`, `/hooks/twilio-inbound`) are all
+    served by `apps/api` on the web service. The two provider hooks are implemented and owned by the notifications
+    agent (code lives in `apps/api` routes that call `apps/worker` libraries); backend owns `/webhooks/shopify`.
+
     Money is a decimal string with 2 places (e.g. "1234.50"). Ids are opaque strings; Shopify ids are GIDs.
     Timestamps are ISO 8601 UTC.
 servers:
@@ -1006,11 +1016,49 @@ paths:
         default: { $ref: "#/components/responses/Error" }
 
   # --------------------------------------------------------------- webhooks
+  /webhooks/shopify:
+    post:
+      tags: [webhooks]
+      operationId: hookShopify
+      summary: Shopify webhook receiver (HMAC verified). One URL for every subscribed topic.
+      description: |
+        Verify `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the raw body with `SHOPIFY_API_SECRET`) before parsing;
+        invalid signature returns 401 `UNAUTHENTICATED`. Dispatch on `X-Shopify-Topic`:
+
+        - `orders/create`: if the order carries a `quote:Q-#####` tag, `transition(ORDER_PLACED)`; otherwise ignore.
+        - `draft_orders/update`: sync draft order state (invoice sent, completed) for the linked quote.
+        - `app/uninstalled`: mark the shop uninstalled and stop processing for it.
+        - `customers/data_request`, `customers/redact`, `shop/redact`: compliance topics, must return 200.
+
+        Idempotent on `X-Shopify-Webhook-Id` (a repeated id returns 200 and does nothing). Respond 200 within 5 seconds;
+        do slow work asynchronously. Unknown topics return 200.
+      security: [{ shopifyHmac: [] }]
+      parameters:
+        - { name: X-Shopify-Topic, in: header, required: true, schema: { type: string, example: orders/create } }
+        - { name: X-Shopify-Shop-Domain, in: header, required: true, schema: { type: string } }
+        - { name: X-Shopify-Webhook-Id, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Topic specific Shopify payload; not modeled here.
+              additionalProperties: true
+      responses:
+        "200": { description: Accepted }
+        "401":
+          description: Invalid HMAC
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        default: { $ref: "#/components/responses/Error" }
   /hooks/email-inbound:
     post:
       tags: [webhooks]
       operationId: hookEmailInbound
       summary: Inbound email reply (provider signature verified). Becomes a Message with channel EMAIL.
+      description: Served from `apps/api`; implemented and owned by the notifications agent.
       security: [{ providerSignature: [] }]
       requestBody:
         required: true
@@ -1033,6 +1081,7 @@ paths:
       tags: [webhooks]
       operationId: hookTwilioInbound
       summary: Inbound SMS (X-Twilio-Signature verified). Handles STOP/HELP, else Message with channel SMS.
+      description: Served from `apps/api`; implemented and owned by the notifications agent.
       security: [{ providerSignature: [] }]
       requestBody:
         required: true
@@ -1063,6 +1112,11 @@ components:
       type: http
       scheme: bearer
       description: Shopify admin session token (JWT).
+    shopifyHmac:
+      type: apiKey
+      in: header
+      name: X-Shopify-Hmac-Sha256
+      description: Base64 HMAC-SHA256 of the raw request body using the app client secret (`SHOPIFY_API_SECRET`).
     providerSignature:
       type: apiKey
       in: header
@@ -1197,7 +1251,10 @@ components:
         listPrice: { $ref: "#/components/schemas/Money" }
         quotedPrice: { $ref: "#/components/schemas/Money" }
         lineTotal: { $ref: "#/components/schemas/Money" }
-        lineNote: { type: string, nullable: true }
+        lineNote:
+          type: string
+          nullable: true
+          description: Customer-visible note on this line (written by the customer or the rep).
         position: { type: integer }
     CustomerQuoteVersion:
       type: object
@@ -1793,7 +1850,7 @@ components:
         variantId: { type: string }
         qty: { type: integer, minimum: 1 }
         quotedPrice: { $ref: "#/components/schemas/Money" }
-        lineNote: { type: string, nullable: true }
+        lineNote: { type: string, nullable: true, description: Customer-visible; shown on the line in every sent version. }
     DraftRevisionRequest:
       type: object
       required: [lines]

@@ -745,6 +745,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks/shopify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Shopify webhook receiver (HMAC verified). One URL for every subscribed topic.
+         * @description Verify `X-Shopify-Hmac-Sha256` (base64 HMAC-SHA256 of the raw body with `SHOPIFY_API_SECRET`) before parsing;
+         *     invalid signature returns 401 `UNAUTHENTICATED`. Dispatch on `X-Shopify-Topic`:
+         *
+         *     - `orders/create`: if the order carries a `quote:Q-#####` tag, `transition(ORDER_PLACED)`; otherwise ignore.
+         *     - `draft_orders/update`: sync draft order state (invoice sent, completed) for the linked quote.
+         *     - `app/uninstalled`: mark the shop uninstalled and stop processing for it.
+         *     - `customers/data_request`, `customers/redact`, `shop/redact`: compliance topics, must return 200.
+         *
+         *     Idempotent on `X-Shopify-Webhook-Id` (a repeated id returns 200 and does nothing). Respond 200 within 5 seconds;
+         *     do slow work asynchronously. Unknown topics return 200.
+         */
+        post: operations["hookShopify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/hooks/email-inbound": {
         parameters: {
             query?: never;
@@ -754,7 +783,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Inbound email reply (provider signature verified). Becomes a Message with channel EMAIL. */
+        /**
+         * Inbound email reply (provider signature verified). Becomes a Message with channel EMAIL.
+         * @description Served from `apps/api`; implemented and owned by the notifications agent.
+         */
         post: operations["hookEmailInbound"];
         delete?: never;
         options?: never;
@@ -771,7 +803,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Inbound SMS (X-Twilio-Signature verified). Handles STOP/HELP, else Message with channel SMS. */
+        /**
+         * Inbound SMS (X-Twilio-Signature verified). Handles STOP/HELP, else Message with channel SMS.
+         * @description Served from `apps/api`; implemented and owned by the notifications agent.
+         */
         post: operations["hookTwilioInbound"];
         delete?: never;
         options?: never;
@@ -859,6 +894,7 @@ export interface components {
             listPrice: components["schemas"]["Money"];
             quotedPrice: components["schemas"]["Money"];
             lineTotal: components["schemas"]["Money"];
+            /** @description Customer-visible note on this line (written by the customer or the rep). */
             lineNote?: string | null;
             position: number;
         };
@@ -1359,6 +1395,7 @@ export interface components {
             variantId: string;
             qty: number;
             quotedPrice: components["schemas"]["Money"];
+            /** @description Customer-visible; shown on the line in every sent version. */
             lineNote?: string | null;
         };
         DraftRevisionRequest: {
@@ -2671,6 +2708,44 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["StaffCustomer"][];
                     };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    hookShopify: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Shopify-Topic": string;
+                "X-Shopify-Shop-Domain": string;
+                "X-Shopify-Webhook-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid HMAC */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             default: components["responses"]["Error"];
