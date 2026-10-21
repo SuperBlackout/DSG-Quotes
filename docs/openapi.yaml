@@ -2,6 +2,13 @@ openapi: 3.0.3
 info:
   title: DSG Quotes API
   version: 0.2.0
+  x-cors:
+    appliesTo: "/c/*"
+    allowedOrigins: "echo request Origin, including the literal string null"
+    allowedHeaders: [Authorization, Content-Type]
+    allowedMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+    preflight: "OPTIONS on every /c/* path returns 204 without authentication"
+    maxAgeSeconds: 600
   description: |
     Contract for the DSG Quotes app. Source of truth for backend, storefront, customer-account, admin and QA.
     Changes go through a PR touching only `docs/` and `packages/shared/` (tag the lead), then
@@ -12,6 +19,15 @@ info:
     Customer schemas never contain `cost`, `marginPct`, `internalNote` or internal messages
     (CLAUDE.md rules 4 and 5); a contract test enforces it.
 
+    **Absolute HTTPS origin for `/c/*`.** The customer-account extension runs in a sandbox with no app proxy, so every
+    `/c/*` route is also served directly at `https://quotes.dsg.direct/c/...` (third server below, host configurable).
+    Auth there is the customer-account session token (`Authorization: Bearer <token>`); the app proxy HMAC does not
+    apply. CORS (see `x-cors`): `Access-Control-Allow-Origin` echoes the request `Origin` and also allows the literal
+    `null` origin (sandboxed iframes and workers send `Origin: null`); `Access-Control-Allow-Headers` includes
+    `Authorization` and `Content-Type`; `Access-Control-Allow-Methods` is `GET, POST, PUT, PATCH, DELETE, OPTIONS`;
+    every `/c/*` path answers an `OPTIONS` preflight with 204 and no auth, `Access-Control-Max-Age: 600`. Credentials
+    (cookies) are not used and `Access-Control-Allow-Credentials` is not sent. `/s/*` and `/hooks/*` send no CORS headers.
+
     **Staff (`/s`) routes** use the Shopify admin session token (embedded app).
 
     Money is a decimal string with 2 places (e.g. "1234.50"). Ids are opaque strings; Shopify ids are GIDs.
@@ -19,6 +35,14 @@ info:
 servers:
   - url: /apps/quotes
     description: App proxy (storefront and customer account)
+  - url: https://{host}
+    description: |
+      Absolute HTTPS origin for `/c/*` (customer-account extension). Paths are `/c/...` directly under the origin
+      (no `/apps/quotes` prefix). Customer-account session token auth, CORS as described in the API description.
+    variables:
+      host:
+        default: quotes.dsg.direct
+        description: Production host. Dev and staging override it.
   - url: /api
     description: Embedded admin app server
   - url: http://localhost:4010
@@ -214,6 +238,10 @@ paths:
       tags: [customer]
       operationId: acceptCustomerQuote
       summary: QUOTE_READY to ACCEPTED (current version)
+      description: |
+        409 `VERSION_MISMATCH` (with `details.currentVersion`) means staff sent a newer version than the one the
+        customer saw: the client must reload the quote and let the customer re-review the new version before
+        accepting again. It is never retried automatically.
       parameters: [{ $ref: "#/components/parameters/QuoteId" }]
       requestBody:
         content:
@@ -288,7 +316,10 @@ paths:
       tags: [customer]
       operationId: checkoutCustomerQuote
       summary: Accept to buy. Requires ACCEPTED and not expired (isPurchasable); creates or reuses the draft order.
-      description: Idempotent. Returns 409 NOT_PURCHASABLE if the quote is not ACCEPTED or has expired.
+      description: |
+        Idempotent. Returns 409 `NOT_PURCHASABLE` if the quote is not ACCEPTED or has expired. The client shows the
+        error `message` and offers "Ask for a new quote", which calls `POST /c/quotes/{id}/duplicate` (new DRAFT with
+        prices re-snapshotted) and opens the copy.
       parameters: [{ $ref: "#/components/parameters/QuoteId" }]
       responses:
         "200":
@@ -301,6 +332,27 @@ paths:
                 properties:
                   invoiceUrl: { type: string, format: uri }
                   draftOrderId: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/pdf:
+    get:
+      tags: [customer]
+      operationId: getCustomerQuotePdf
+      summary: Printable PDF of the latest sent version (customer-safe, no cost or margin)
+      description: |
+        Returns 404 `NOT_FOUND` until at least one version has been sent (DRAFT quotes have no PDF). Add `?version=N` for an earlier sent version. Served with
+        `Content-Disposition: inline; filename="Q-#####-vN.pdf"`.
+      parameters:
+        - $ref: "#/components/parameters/QuoteId"
+        - name: version
+          in: query
+          description: Sent version number; defaults to the current version.
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: PDF document
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
         default: { $ref: "#/components/responses/Error" }
   /c/quotes/{id}/messages:
     parameters:
@@ -712,7 +764,9 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: Customer account session token (Bearer), or app proxy HMAC query signature from the storefront.
+      description: |
+        Customer account session token (`Authorization: Bearer <token>`; the only option on the absolute HTTPS origin),
+        or app proxy HMAC query signature from the storefront (`/apps/quotes/c/...`).
     staffSession:
       type: http
       scheme: bearer
@@ -770,6 +824,11 @@ components:
             Stable machine code. Used values: BAD_REQUEST, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND,
             INVALID_TRANSITION, NOT_PURCHASABLE, VERSION_MISMATCH, NOT_EDITABLE, FLOOR_APPROVAL_REQUIRED,
             VALIDATION_FAILED, RATE_LIMITED, INTERNAL.
+
+            Client handling: `NOT_PURCHASABLE` (409, checkout) means the quote is not ACCEPTED or has expired; show the
+            message and offer "Ask for a new quote" (duplicate). `VERSION_MISMATCH` (409, accept) means a newer version
+            was sent; reload and re-review the new version. `RATE_LIMITED` is reserved: rate limiting is deferred and
+            the API does not emit it yet.
           example: INVALID_TRANSITION
         message: { type: string, example: "SUBMIT is not allowed from ORDERED" }
         details:
@@ -779,6 +838,13 @@ components:
       type: string
       pattern: '^-?\d+\.\d{2}$'
       example: "1234.50"
+    CurrencyCode:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      example: USD
+      description: |
+        ISO 4217 currency of every Money value on the same quote (summary, versions, lines, staff fields).
+        Money itself stays a plain decimal string; there is never a mix of currencies within one quote.
     QuoteStatus:
       type: string
       enum: [DRAFT, SUBMITTED, IN_REVIEW, QUOTE_READY, CHANGES_REQUESTED, ACCEPTED, ORDERED, EXPIRED, DECLINED, ARCHIVED]
@@ -876,9 +942,12 @@ components:
     CustomerQuoteActions:
       type: object
       description: Server-computed so front-ends never re-implement the state machine.
-      required: [canEditLines, canSubmit, canWithdraw, canAccept, canRequestChanges, canBuy, canReopen, canDelete, canDecline]
+      required: [canEditLines, canEditHeader, canSubmit, canWithdraw, canAccept, canRequestChanges, canBuy, canReopen, canDelete, canDecline]
       properties:
         canEditLines: { type: boolean }
+        canEditHeader:
+          type: boolean
+          description: Job, PO, needed-by, ship-to, notes and watchers may be changed via PATCH /c/quotes/{id} (DRAFT).
         canSubmit: { type: boolean }
         canWithdraw: { type: boolean }
         canAccept: { type: boolean }
@@ -889,7 +958,7 @@ components:
         canDecline: { type: boolean }
     CustomerQuoteSummary:
       type: object
-      required: [id, number, title, status, waitingOn, lineCount, total, updatedAt, actions]
+      required: [id, number, title, status, waitingOn, lineCount, currencyCode, total, unreadCount, updatedAt, actions]
       properties:
         id: { type: string }
         number: { type: integer, example: 10482 }
@@ -900,9 +969,19 @@ components:
         job: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/JobRef" }] }
         currentVersion: { type: integer }
         lineCount: { type: integer }
+        currencyCode: { $ref: "#/components/schemas/CurrencyCode" }
         total: { $ref: "#/components/schemas/Money" }
+        previousTotal:
+          allOf: [{ $ref: "#/components/schemas/Money" }]
+          nullable: true
+          description: Total of the sent version before the current one; null when only one version has been sent.
         expiresAt: { type: string, format: date-time, nullable: true }
         ownerName: { type: string }
+        assignedRepName: { type: string, nullable: true }
+        unreadCount:
+          type: integer
+          minimum: 0
+          description: Customer-visible messages (never internal notes) not yet read by this customer.
         orderId: { type: string, nullable: true }
         updatedAt: { type: string, format: date-time }
         actions: { $ref: "#/components/schemas/CustomerQuoteActions" }
@@ -919,7 +998,6 @@ components:
             watchers:
               type: array
               items: { type: string, format: email }
-            assignedRepName: { type: string, nullable: true }
             lines:
               type: array
               description: Customer's working draft lines when DRAFT, otherwise the latest sent version's lines.
@@ -1058,14 +1136,44 @@ components:
       properties:
         email: { type: boolean }
         sms: { type: boolean }
+    NotificationEvent:
+      type: string
+      enum: [QUOTE_RECEIVED, QUOTE_READY, NEW_MESSAGE, EXPIRING, ORDERED, ACCEPTED, WEEKLY_SUMMARY]
+      description: |
+        Customer-facing notification keys (the full set). QUOTE_RECEIVED = we got your request (SUBMITTED),
+        QUOTE_READY = a version was sent, NEW_MESSAGE = staff message, EXPIRING = 3-day reminder,
+        ORDERED = order placed, ACCEPTED = acceptance confirmation, WEEKLY_SUMMARY = weekly digest of open quotes.
+        CHANGES_REQUESTED is staff-only and is not a customer preference.
+    WatcherScope:
+      type: string
+      description: The literal `all` (every quote) or a job id (`JobRef.id`) to follow only that job's quotes.
+      example: all
+    Watcher:
+      type: object
+      required: [email, scope, channels]
+      properties:
+        email: { type: string, format: email }
+        name: { type: string, nullable: true }
+        role: { type: string, nullable: true, example: Project manager }
+        scope: { $ref: "#/components/schemas/WatcherScope" }
+        channels: { $ref: "#/components/schemas/NotificationChannelPref" }
     NotificationPrefs:
       type: object
       required: [events, email]
       properties:
         events:
           type: object
-          description: Keyed by event, e.g. QUOTE_READY, NEW_MESSAGE, ACCEPTED, ORDERED, EXPIRING, CHANGES_REQUESTED.
-          additionalProperties: { $ref: "#/components/schemas/NotificationChannelPref" }
+          description: One entry per NotificationEvent. PUT replaces all of them.
+          required: [QUOTE_RECEIVED, QUOTE_READY, NEW_MESSAGE, EXPIRING, ORDERED, ACCEPTED, WEEKLY_SUMMARY]
+          additionalProperties: false
+          properties:
+            QUOTE_RECEIVED: { $ref: "#/components/schemas/NotificationChannelPref" }
+            QUOTE_READY: { $ref: "#/components/schemas/NotificationChannelPref" }
+            NEW_MESSAGE: { $ref: "#/components/schemas/NotificationChannelPref" }
+            EXPIRING: { $ref: "#/components/schemas/NotificationChannelPref" }
+            ORDERED: { $ref: "#/components/schemas/NotificationChannelPref" }
+            ACCEPTED: { $ref: "#/components/schemas/NotificationChannelPref" }
+            WEEKLY_SUMMARY: { $ref: "#/components/schemas/NotificationChannelPref" }
         email: { type: string, format: email }
         phone: { type: string, nullable: true, example: "+13125550123" }
         smsOptIn:
@@ -1080,7 +1188,8 @@ components:
         timezone: { type: string, example: America/New_York }
         watchers:
           type: array
-          items: { type: string, format: email }
+          description: People who also receive the selected channels, for all quotes or one job.
+          items: { $ref: "#/components/schemas/Watcher" }
 
     # ---- staff shapes (cost, margin, internal notes allowed)
     StaffQuoteLine:
