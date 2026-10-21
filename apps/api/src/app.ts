@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import type { AppDeps } from "./context";
 import { ApiError } from "./errors";
+import { hookOptionsFromEnv, hookRoutes, hooksEnabled } from "./hooks";
 import { customerRoutes } from "./routes/customer";
 import { staffRoutes } from "./routes/staff";
 import { webhookRoutes } from "./routes/webhooks";
@@ -88,6 +89,7 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(staffRoutes, { prefix: "/s" });
   await app.register(staffRoutes, { prefix: "/api/s" });
   await app.register(webhookRoutes, { prefix: "/webhooks" });
+  if (hooksEnabled()) await app.register(hookRoutes, { prefix: "/hooks", ...hookOptionsFromEnv(deps.config.apiSecret) });
 
   return app;
 }

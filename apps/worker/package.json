@@ -3,5 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "start": "echo 'notifications agent: implement worker'", "typecheck": "echo 'todo'", "test": "echo 'todo'" }
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "cron": "tsx src/cron.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^6.19.3",
+    "@prisma/client": "^6.19.3",
+    "pg": "^8.23.1",
+    "shared": "workspace:*",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/pg": "^8.23.1",
+    "fastify": "^5.12.7",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
 }
