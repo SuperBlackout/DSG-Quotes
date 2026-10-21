@@ -1,10 +1,11 @@
 // Screen 5 form model: event x channel matrix, contact fields, SMS opt-in, quiet hours, watchers.
-import type { NotificationChannelPref, NotificationPrefs } from "../api/types";
+import type { NotificationChannelPref, NotificationEvent, NotificationPrefs, Watcher } from "../api/types";
 import { consentPayload } from "./consent";
 
 export interface EventDef {
   /** Key inside NotificationPrefs.events. */
-  key: string;
+  key: NotificationEvent;
+  /** Friendly label (CA-5). */
   title: string;
   description: string;
   /** false = email only (the Text cell shows a dash). */
@@ -12,30 +13,49 @@ export interface EventDef {
 }
 
 /**
- * Rows of the matrix, in mockup order. The contract only lists example keys (QUOTE_READY,
- * NEW_MESSAGE, ACCEPTED, ORDERED, EXPIRING, CHANGES_REQUESTED); QUOTE_RECEIVED and WEEKLY_SUMMARY are
- * assumed names for the mockup rows "Quote received by sales" and "Weekly summary of open quotes".
- * The lead must confirm the full key set with the notifications agent.
+ * Exactly the seven customer-facing keys of the contract's `NotificationEvent` (CHANGES_REQUESTED is
+ * staff-only and not a preference). `satisfies` plus the Record type below make the compiler fail if
+ * the contract adds or removes a key.
  */
-export const EVENT_DEFS: readonly EventDef[] = [
-  { key: "QUOTE_READY", title: "Quote is ready or revised", description: "Sales sent new pricing to review", sms: true },
+export const EVENT_DEFS = [
+  { key: "QUOTE_RECEIVED", title: "Quote received", description: "Confirmation after you submit a quote", sms: true },
+  { key: "QUOTE_READY", title: "Quote ready", description: "Sales sent new or revised pricing to review", sms: true },
   {
     key: "NEW_MESSAGE",
-    title: "New message or question from sales",
-    description: "Messages within 5 minutes are bundled into one alert",
+    title: "New message",
+    description: "A message or question from sales. Messages within 5 minutes are bundled into one alert",
     sms: true,
   },
-  { key: "QUOTE_RECEIVED", title: "Quote received by sales", description: "Confirmation after you submit", sms: true },
-  { key: "EXPIRING", title: "Quote expiring in 3 days", description: "Reminder before held prices lapse", sms: true },
-  { key: "ORDERED", title: "Order placed from a quote", description: "Order confirmation and tracking", sms: true },
-  { key: "WEEKLY_SUMMARY", title: "Weekly summary of open quotes", description: "Mondays, 8:00 AM", sms: false },
-];
+  { key: "EXPIRING", title: "Expiring soon", description: "Reminder 3 days before held prices lapse", sms: true },
+  { key: "ORDERED", title: "Ordered", description: "Order confirmation after you buy from a quote", sms: true },
+  { key: "ACCEPTED", title: "Accepted", description: "Confirmation when a quote is accepted", sms: true },
+  { key: "WEEKLY_SUMMARY", title: "Weekly summary", description: "Open quotes digest, Mondays 8:00 AM", sms: false },
+] as const satisfies readonly EventDef[];
+
+export const EVENT_KEYS: readonly NotificationEvent[] = EVENT_DEFS.map((d) => d.key);
 
 export const DEFAULT_QUIET_START = "19:00";
 export const DEFAULT_QUIET_END = "07:00";
 
+/** Watcher scope meaning "every quote" (contract `WatcherScope`); anything else is a job id. */
+export const SCOPE_ALL = "all";
+
+/** A watcher as edited in the UI: text fields are plain strings; empty name/role are omitted on save. */
+export interface WatcherForm {
+  email: string;
+  name: string;
+  role: string;
+  /** "all" or a JobRef.id */
+  scope: string;
+  channels: NotificationChannelPref;
+}
+
+export function emptyWatcher(): WatcherForm {
+  return { email: "", name: "", role: "", scope: SCOPE_ALL, channels: { email: true, sms: false } };
+}
+
 export interface PrefsForm {
-  events: Record<string, NotificationChannelPref>;
+  events: Record<NotificationEvent, NotificationChannelPref>;
   email: string;
   /** As typed by the customer. Normalized to E.164 on save. */
   phone: string;
@@ -44,13 +64,23 @@ export interface PrefsForm {
   quietStart: string;
   quietEnd: string;
   timezone: string;
-  watchers: string[];
+  watchers: WatcherForm[];
+}
+
+export function watcherToForm(w: Watcher): WatcherForm {
+  return {
+    email: w.email,
+    name: w.name ?? "",
+    role: w.role ?? "",
+    scope: w.scope || SCOPE_ALL,
+    channels: { email: w.channels?.email ?? false, sms: w.channels?.sms ?? false },
+  };
 }
 
 export function formFromPrefs(p: NotificationPrefs, fallbackTimezone = "America/New_York"): PrefsForm {
-  const events: Record<string, NotificationChannelPref> = {};
+  const events = {} as Record<NotificationEvent, NotificationChannelPref>;
   for (const def of EVENT_DEFS) {
-    const cur = p.events[def.key];
+    const cur = (p.events as Partial<Record<NotificationEvent, NotificationChannelPref>> | undefined)?.[def.key];
     events[def.key] = { email: cur?.email ?? false, sms: def.sms ? (cur?.sms ?? false) : false };
   }
   const quietEnabled = !!p.quietStart && !!p.quietEnd;
@@ -63,7 +93,7 @@ export function formFromPrefs(p: NotificationPrefs, fallbackTimezone = "America/
     quietStart: p.quietStart || DEFAULT_QUIET_START,
     quietEnd: p.quietEnd || DEFAULT_QUIET_END,
     timezone: p.timezone || fallbackTimezone,
-    watchers: [...(p.watchers ?? [])],
+    watchers: (p.watchers ?? []).map(watcherToForm),
   };
 }
 
@@ -100,6 +130,18 @@ export function anySmsEnabled(f: PrefsForm): boolean {
   return EVENT_DEFS.some((d) => d.sms && f.events[d.key]?.sms);
 }
 
+/** Dedupe key: the same person may follow different jobs, but not the same scope twice. */
+export function watcherKey(w: Pick<WatcherForm, "email" | "scope">): string {
+  return `${w.email.trim().toLowerCase()}|${w.scope}`;
+}
+
+/** Error text for one watcher row, or undefined when it can be saved. */
+export function watcherError(w: WatcherForm): string | undefined {
+  if (!isEmail(w.email)) return `"${w.email}" is not a valid email address.`;
+  if (!w.channels.email && !w.channels.sms) return `Pick email or text for ${w.email}.`;
+  return undefined;
+}
+
 export function validatePrefs(f: PrefsForm): PrefsErrors {
   const errors: PrefsErrors = {};
   if (!isEmail(f.email)) errors.email = "Enter a valid email address.";
@@ -110,9 +152,13 @@ export function validatePrefs(f: PrefsForm): PrefsErrors {
 
   const seen = new Set<string>();
   for (const w of f.watchers) {
-    const key = w.trim().toLowerCase();
-    if (!isEmail(w)) errors.watchers = `"${w}" is not a valid email address.`;
-    else if (seen.has(key)) errors.watchers = `${w} is listed twice.`;
+    const err = watcherError(w);
+    if (err) {
+      errors.watchers = err;
+      continue;
+    }
+    const key = watcherKey(w);
+    if (seen.has(key)) errors.watchers = `${w.email} is listed twice for the same scope.`;
     seen.add(key);
   }
   return errors;
@@ -120,24 +166,73 @@ export function validatePrefs(f: PrefsForm): PrefsErrors {
 
 // ---- save payload --------------------------------------------------------------------------------
 
+export function watcherToPut(w: WatcherForm): Watcher {
+  const out: Watcher = {
+    email: w.email.trim(),
+    scope: w.scope || SCOPE_ALL,
+    channels: { email: w.channels.email, sms: w.channels.sms },
+  };
+  const name = w.name.trim();
+  const role = w.role.trim();
+  if (name) out.name = name;
+  if (role) out.role = role;
+  return out;
+}
+
 /**
- * Body for PUT /c/notification-prefs (a full replace). Unknown event keys returned by the server are
- * carried over untouched so saving this page never silently turns off e.g. ACCEPTED alerts.
- * `smsOptInAt` is read-only server-side and is never sent.
+ * Body for PUT /c/notification-prefs (a full replace). All seven event keys are sent, nothing else
+ * (unknown keys are rejected server-side). `smsOptInAt` is read-only server-side and never sent.
  */
-export function prefsToPut(original: NotificationPrefs, f: PrefsForm): NotificationPrefs {
+export function prefsToPut(_original: NotificationPrefs, f: PrefsForm): NotificationPrefs {
   const phone = normalizePhone(f.phone);
-  const body: NotificationPrefs = {
-    events: { ...original.events, ...f.events },
+  const events = {} as NotificationPrefs["events"];
+  for (const key of EVENT_KEYS) events[key] = { email: f.events[key].email, sms: f.events[key].sms };
+  return {
+    events,
     email: f.email.trim(),
     phone,
     ...consentPayload(f.smsOptIn),
     quietStart: f.quietEnabled ? f.quietStart : null,
     quietEnd: f.quietEnabled ? f.quietEnd : null,
     timezone: f.timezone,
-    watchers: f.watchers.map((w) => w.trim()),
+    watchers: f.watchers.map(watcherToPut),
   };
-  return body;
+}
+
+// ---- watcher scope choices ---------------------------------------------------------------------------
+
+export interface ScopeOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * "All quotes" plus one entry per known job. A watcher whose job is not in `jobs` (for example it was
+ * loaded from the server but the job list failed to load) is kept as "A specific job" so a save never
+ * rewrites its scope.
+ */
+export function scopeOptions(jobs: ReadonlyArray<{ id: string; name: string }>, watchers: readonly WatcherForm[]): ScopeOption[] {
+  const out: ScopeOption[] = [{ value: SCOPE_ALL, label: "All quotes" }];
+  const known = new Set<string>();
+  for (const j of jobs) {
+    if (known.has(j.id)) continue;
+    known.add(j.id);
+    out.push({ value: j.id, label: `Job: ${j.name}` });
+  }
+  for (const w of watchers) {
+    if (w.scope !== SCOPE_ALL && !known.has(w.scope)) {
+      known.add(w.scope);
+      out.push({ value: w.scope, label: "A specific job" });
+    }
+  }
+  return out;
+}
+
+/** One-line description of a watcher: "Sam Lee · Project manager · All quotes · Email + text". */
+export function describeWatcher(w: WatcherForm, scopes: readonly ScopeOption[]): string {
+  const channels = [w.channels.email ? "Email" : "", w.channels.sms ? "Text" : ""].filter(Boolean).join(" + ");
+  const scope = scopes.find((s) => s.value === w.scope)?.label ?? "A specific job";
+  return [w.name.trim(), w.role.trim(), scope, channels].filter(Boolean).join(" · ");
 }
 
 // ---- quiet-hours choices ---------------------------------------------------------------------------
