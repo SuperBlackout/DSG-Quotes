@@ -69,6 +69,14 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
     if (err instanceof ZodError) {
       return reply.status(400).send({ code: "BAD_REQUEST", message: "Invalid request", details: { issues: err.issues } });
     }
+    // Safety nets: input the route guards missed must still be a 4xx, never a 500 (QA found these on live-like data).
+    const dbMsg = String((err as { message?: unknown }).message ?? "");
+    if ((err as { code?: string }).code === "P2020" || /\b22003\b|numeric field overflow|out of range for type/i.test(dbMsg)) {
+      return reply.status(422).send({ code: "VALIDATION_FAILED", message: "A number in the request is too large" });
+    }
+    if ((err as { name?: string }).name === "PrismaClientValidationError" && /Invalid value|Provided Date object is invalid/i.test(dbMsg)) {
+      return reply.status(400).send({ code: "BAD_REQUEST", message: "Invalid value in request" });
+    }
     const fe = err as { statusCode?: number; code?: string; message: string };
     if (fe.statusCode && fe.statusCode >= 400 && fe.statusCode < 500) {
       const code = fe.statusCode === 429 ? "RATE_LIMITED" : "BAD_REQUEST";
