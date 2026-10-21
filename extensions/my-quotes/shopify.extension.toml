@@ -1,0 +1,32 @@
+# Customer account full-page extension: "My Quotes".
+# Hand-written (no Shopify CLI login was available when this was built). The CLI adds `uid` on the
+# first `shopify app deploy` (lead only, see ../../docs/SETUP.md).
+api_version = "2026-10"
+
+[[extensions]]
+type = "ui_extension"
+name = "My Quotes"
+handle = "my-quotes"
+
+# A full-page target cannot share an extension with any other target and may appear only once per
+# extension. Quote list, quote detail and notification settings are therefore routes inside this one
+# page (see src/router.ts), driven by the Navigation API.
+[[extensions.targeting]]
+target = "customer-account.page.render"
+module = "./src/index.tsx"
+
+# The "My Quotes" account-menu entry is NOT configured here. Shopify has the merchant add a full-page
+# extension to the customer account header menu in the checkout and accounts editor (see README.md).
+# Direct linking is left at its default (allowed) so the storefront can link to the page.
+
+[extensions.capabilities]
+# Needed to call the DSG Quotes API with fetch(). The app must also request
+# "Allow network access in checkout and account UI extensions" in the Dev Dashboard.
+network_access = true
+
+[extensions.settings]
+[[extensions.settings.fields]]
+key = "api_base_url"
+type = "single_line_text_field"
+name = "Quotes API base URL"
+description = "Origin of the DSG Quotes API that serves /c/* (for example https://quotes.dsg.direct). No trailing slash."
