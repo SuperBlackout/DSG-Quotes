@@ -58,7 +58,7 @@ describe("editor ops", () => {
   it("adds a new line with unknown cost and list price as the quote price", () => {
     const s = addVariants(state(), [pick], () => "new-1");
     expect(s.lines).toHaveLength(2);
-    expect(s.lines[1]).toMatchObject({ key: "new-1", qty: 1, costCents: null, listPriceCents: 5000, quotedPriceCents: 5000 });
+    expect(s.lines[1]).toMatchObject({ key: "new-1", qty: 1, costCents: null, costUnknown: false, listPriceCents: 5000, quotedPriceCents: 5000 });
     expect(s.lines[1]!.id).toBeUndefined();
   });
 

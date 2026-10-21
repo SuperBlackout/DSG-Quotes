@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, buildQuery, createStaffClient } from "./api-client";
-import { safe, validateFloorPct } from "./proposed-api";
 
 function fakeFetch(status: number, body: unknown) {
   const calls: { url: string; init: RequestInit }[] = [];
   const f = (async (url: string, init: RequestInit) => {
     calls.push({ url, init });
-    return new Response(body === undefined ? "" : JSON.stringify(body), { status });
+    return new Response(body === undefined || status === 204 ? null : JSON.stringify(body), { status });
   }) as unknown as typeof fetch;
   return { f, calls };
 }
@@ -65,19 +64,53 @@ describe("staff client", () => {
   });
 });
 
-describe("proposed endpoints helpers", () => {
-  it("safe() returns the fallback on failure", async () => {
-    const r = await safe(async () => Promise.reject(new Error("404")), 5);
-    expect(r).toEqual({ data: 5, available: false });
-    expect(await safe(async () => 1, 5)).toEqual({ data: 1, available: true });
+describe("contract 0.2.0 endpoints", () => {
+  const call = async (fn: (c: ReturnType<typeof createStaffClient>) => Promise<unknown>, status = 200, body: unknown = {}) => {
+    const { f, calls } = fakeFetch(status, body);
+    await fn(createStaffClient({ getToken: async () => "t", fetch: f }));
+    return calls[0]!;
+  };
+
+  it("GET /s/me, /s/staff, /s/teams, /s/settings, /s/saved-replies", async () => {
+    expect((await call((c) => c.me())).url).toBe("/api/s/me");
+    expect((await call((c) => c.listStaff())).url).toBe("/api/s/staff");
+    expect((await call((c) => c.listStaff(true))).url).toBe("/api/s/staff?active=true");
+    expect((await call((c) => c.listTeams())).url).toBe("/api/s/teams");
+    expect((await call((c) => c.getSettings())).url).toBe("/api/s/settings");
+    expect((await call((c) => c.listSavedReplies())).url).toBe("/api/s/saved-replies");
   });
 
-  it("validates the floor percentage", () => {
-    expect(validateFloorPct("15")).toEqual({ ok: true, value: 15 });
-    expect(validateFloorPct(" 12.505 ")).toEqual({ ok: true, value: 12.51 });
-    expect(validateFloorPct("")).toMatchObject({ ok: false });
-    expect(validateFloorPct("abc")).toMatchObject({ ok: false });
-    expect(validateFloorPct("100")).toMatchObject({ ok: false });
-    expect(validateFloorPct("-1")).toMatchObject({ ok: false });
+  it("writes staff, teams, settings and saved replies with the contract bodies", async () => {
+    const staff = await call((c) => c.updateStaff("s/1", { role: "manager", teamIds: ["t1"], priceFloorPct: null, active: true }));
+    expect([staff.url, staff.init.method]).toEqual(["/api/s/staff/s%2F1", "PUT"]);
+    expect(JSON.parse(staff.init.body as string)).toEqual({ role: "manager", teamIds: ["t1"], priceFloorPct: null, active: true });
+
+    const create = await call((c) => c.createTeam({ name: "Install", memberIds: ["s1"] }), 201);
+    expect([create.url, create.init.method]).toEqual(["/api/s/teams", "POST"]);
+    const rename = await call((c) => c.updateTeam("t1", { name: "Sales" }));
+    expect([rename.url, rename.init.method]).toEqual(["/api/s/teams/t1", "PUT"]);
+    const del = await call((c) => c.deleteTeam("t1"), 204, undefined);
+    expect([del.url, del.init.method]).toEqual(["/api/s/teams/t1", "DELETE"]);
+
+    const settings = await call((c) =>
+      c.putSettings({ defaultPriceFloorPct: 15, routing: { defaultTeamId: null, autoAssignByCompany: false, rules: [] } }),
+    );
+    expect([settings.url, settings.init.method]).toEqual(["/api/s/settings", "PUT"]);
+
+    const replies = await call((c) => c.putSavedReplies([{ title: "Hi", body: "Hello", shared: false }]));
+    expect([replies.url, replies.init.method]).toEqual(["/api/s/saved-replies", "PUT"]);
+    expect(JSON.parse(replies.init.body as string)).toEqual({ items: [{ title: "Hi", body: "Hello", shared: false }] });
+  });
+
+  it("request-floor-approval, upload-url and customer search", async () => {
+    const r = await call((c) => c.requestFloorApproval("q1", { lineIds: ["l1"], note: "please" }));
+    expect([r.url, r.init.method]).toEqual(["/api/s/quotes/q1/request-floor-approval", "POST"]);
+    expect(JSON.parse(r.init.body as string)).toEqual({ lineIds: ["l1"], note: "please" });
+
+    const u = await call((c) => c.createAttachmentUpload("q1", { name: "a.pdf", size: 10, mime: "application/pdf" }));
+    expect([u.url, u.init.method]).toEqual(["/api/s/quotes/q1/attachments/upload-url", "POST"]);
+
+    const s = await call((c) => c.searchCustomers("  Pure Vision ", 5), 200, { items: [] });
+    expect(s.url).toBe("/api/s/customers?q=Pure+Vision&limit=5");
   });
 });

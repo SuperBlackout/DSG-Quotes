@@ -1,6 +1,6 @@
 import type { EditorState } from "../lib/editor-state";
 import { dateInputToIso } from "../lib/editor-state";
-import { computeTotals, formatMoney, lineTotalCents } from "../lib/pricing";
+import { computeTotals, formatMoneyIn, lineTotalCents } from "../lib/pricing";
 
 /**
  * "Preview as customer": renders only what the customer will see in the sent version (CustomerQuoteLine /
@@ -11,14 +11,17 @@ export function CustomerPreview({
   versionNo,
   number,
   title,
+  currencyCode,
   state,
 }: {
   id: string;
   versionNo: number;
   number: string;
   title: string;
+  currencyCode?: string;
   state: EditorState;
 }) {
+  const money = (cents: number) => formatMoneyIn(cents, currencyCode);
   const totals = computeTotals(state.lines, state.freightCents);
   const goodUntil = dateInputToIso(state.expiresOn) ? state.expiresOn : null;
   return (
@@ -43,8 +46,8 @@ export function CustomerPreview({
                   </s-stack>
                 </s-table-cell>
                 <s-table-cell>{l.qty}</s-table-cell>
-                <s-table-cell>{formatMoney(l.quotedPriceCents)}</s-table-cell>
-                <s-table-cell>{formatMoney(lineTotalCents(l))}</s-table-cell>
+                <s-table-cell>{money(l.quotedPriceCents)}</s-table-cell>
+                <s-table-cell>{money(lineTotalCents(l))}</s-table-cell>
               </s-table-row>
             ))}
           </s-table-body>
@@ -52,15 +55,15 @@ export function CustomerPreview({
         <s-stack gap="small-300">
           <s-stack direction="inline" justifyContent="space-between">
             <s-text>Subtotal</s-text>
-            <s-text>{formatMoney(totals.subtotalCents)}</s-text>
+            <s-text>{money(totals.subtotalCents)}</s-text>
           </s-stack>
           <s-stack direction="inline" justifyContent="space-between">
             <s-text>Freight</s-text>
-            <s-text>{formatMoney(totals.freightCents)}</s-text>
+            <s-text>{money(totals.freightCents)}</s-text>
           </s-stack>
           <s-stack direction="inline" justifyContent="space-between">
             <s-text type="strong">Total</s-text>
-            <s-text type="strong">{formatMoney(totals.totalCents)}</s-text>
+            <s-text type="strong">{money(totals.totalCents)}</s-text>
           </s-stack>
         </s-stack>
         {state.repNote.trim() ? (

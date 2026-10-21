@@ -6,11 +6,15 @@ import { useMemo, useState } from "react";
 import type { ClientLoaderFunctionArgs } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useLoaderData, useRouteError } from "react-router";
-import { ApiError, type StaffMessage, type StaffQuote } from "../lib/api-client";
+import { ApiError, type Attachment, type SavedReply, type StaffMe, type StaffMember, type StaffMessage, type StaffQuote, type Team } from "../lib/api-client";
+import { uploadAttachment } from "../lib/attachments";
 import { getBrowserClients } from "../lib/browser-client";
 import {
   STATUS_LABEL,
+  contactSummary,
   diffAgainstVersion,
+  flaggedLineIds,
+  hasPendingSnapshot,
   isDirty,
   nextVersionNo,
   quoteActions,
@@ -21,17 +25,8 @@ import {
   type EditorState,
 } from "../lib/editor-state";
 import { addVariants, applyDiscountToAll, fromPickerItem, removeLine, setQty, setQuotedPrice, updateLine } from "../lib/editor-ops";
-import { computeTotals, floorViolations, formatMoney, parseMoney, toMoneyString } from "../lib/pricing";
-import {
-  DEFAULT_SAVED_REPLIES,
-  DEFAULT_SETTINGS,
-  safe,
-  type QuoteSettings,
-  type SavedReply,
-  type StaffMe,
-  type StaffMember,
-  type Team,
-} from "../lib/proposed-api";
+import { computeTotals, floorViolations, formatMoneyIn, parseMoney, toMoneyString } from "../lib/pricing";
+import { permissionsFor } from "../lib/staff";
 import { CommitField } from "../components/CommitField";
 import { Conversation } from "../components/Conversation";
 import { CustomerPreview } from "../components/CustomerPreview";
@@ -40,33 +35,26 @@ import { ErrorBanner, LoadingPage, StatusBadge, errorMessage, useNow } from "../
 
 interface EditorData {
   quote: StaffQuote;
-  me: StaffMe | null;
+  /** Role, teams and the effective price floor. Required: the floor drives every margin flag in the editor. */
+  me: StaffMe;
   staff: StaffMember[];
   teams: Team[];
-  settings: QuoteSettings;
   savedReplies: SavedReply[];
 }
 
 export const clientLoader = async ({ params }: ClientLoaderFunctionArgs): Promise<EditorData> => {
   const id = params["id"];
   if (!id) throw new Response("Missing quote id", { status: 400 });
-  const { staff, settings } = getBrowserClients();
-  const [quote, me, staffList, teams, cfg, replies] = await Promise.all([
+  const { staff } = getBrowserClients();
+  // Pickers and saved replies are conveniences: if one fails the editor still opens.
+  const [quote, me, staffList, teams, replies] = await Promise.all([
     staff.getQuote(id),
-    safe(() => settings.me(), null as StaffMe | null),
-    safe(() => settings.listStaff().then((r) => r.items), [] as StaffMember[]),
-    safe(() => settings.listTeams().then((r) => r.items), [] as Team[]),
-    safe(() => settings.getSettings(), DEFAULT_SETTINGS),
-    safe(() => settings.listSavedReplies().then((r) => r.items), DEFAULT_SAVED_REPLIES),
+    staff.me(),
+    staff.listStaff(true).then((r) => r.items, () => [] as StaffMember[]),
+    staff.listTeams().then((r) => r.items, () => [] as Team[]),
+    staff.listSavedReplies().then((r) => r.items, () => [] as SavedReply[]),
   ]);
-  return {
-    quote,
-    me: me.data,
-    staff: staffList.data,
-    teams: teams.data,
-    settings: cfg.data,
-    savedReplies: replies.data.length > 0 ? replies.data : DEFAULT_SAVED_REPLIES,
-  };
+  return { quote, me, staff: staffList, teams, savedReplies: replies };
 };
 clientLoader.hydrate = true as const;
 
@@ -109,8 +97,11 @@ function QuoteEditor({ data }: { data: EditorData }) {
   const [discountText, setDiscountText] = useState("5");
   const [declineReason, setDeclineReason] = useState("");
 
-  const { me, settings } = data;
-  const floorPct = me?.priceFloorPct ?? settings.defaultPriceFloorPct;
+  const { me } = data;
+  const perms = permissionsFor(me);
+  const floorPct = me.effectivePriceFloorPct;
+  const money = (cents: number) => formatMoneyIn(cents, quote.currencyCode);
+  const contact = contactSummary(quote);
   const actions = quoteActions(quote.status);
   const readOnly = !actions.canEdit;
   const versionNo = nextVersionNo(quote);
@@ -121,7 +112,8 @@ function QuoteEditor({ data }: { data: EditorData }) {
   const validation = validateEditor(state);
   const number = quote.displayNumber ?? `Q-${quote.number}`;
   const assignedValue = quote.assignedRepId ? `rep:${quote.assignedRepId}` : quote.teamId ? `team:${quote.teamId}` : "";
-  const isMine = !!me && quote.assignedRepId === me.id;
+  const isMine = quote.assignedRepId === me.id;
+  const pendingSnapshot = hasPendingSnapshot(state);
 
   const adopt = (q: StaffQuote) => {
     setQuote(q);
@@ -143,15 +135,17 @@ function QuoteEditor({ data }: { data: EditorData }) {
     }
   };
 
-  const saveDraft = async (): Promise<StaffQuote | undefined> => {
-    if (validation.length > 0) {
-      setError(validation[0] ?? "Fix the highlighted problems first.");
+  /** Save `from` (default: the current editor state). The response replaces the editor state: it carries the snapshotted cost and list price. */
+  const saveDraft = async (from: EditorState = state, toast = "Draft saved"): Promise<StaffQuote | undefined> => {
+    const problems = validateEditor(from);
+    if (problems.length > 0) {
+      setError(problems[0] ?? "Fix the highlighted problems first.");
       return undefined;
     }
-    const q = await run("save", () => api.saveDraft(quote.id, toDraftRequest(state)));
+    const q = await run("save", () => api.saveDraft(quote.id, toDraftRequest(from)));
     if (q) {
       adopt(q);
-      shopify.toast.show("Draft saved");
+      shopify.toast.show(toast);
     }
     return q;
   };
@@ -161,13 +155,23 @@ function QuoteEditor({ data }: { data: EditorData }) {
       setError(validation[0] ?? "Fix the highlighted problems first.");
       return;
     }
+    const sendingVersion = versionNo;
     const q = await run("send", async () => {
-      if (dirty) await api.saveDraft(quote.id, toDraftRequest(state));
+      if (dirty) {
+        const saved = await api.saveDraft(quote.id, toDraftRequest(state));
+        // The save snapshots cost, so lines can come back flagged (unknown cost). Stop before the server refuses.
+        const flagged = flaggedLineIds(stateFromQuote(saved).lines, floorPct);
+        if (flagged.length > 0) {
+          adopt(saved);
+          setFloorIds(flagged);
+          throw new Error("Saved. Some lines need manager approval before this can be sent.");
+        }
+      }
       return api.send(quote.id);
     });
     if (q) {
       adopt(q);
-      shopify.toast.show(`Sent v${nextVersionNo(q) - 1} to customer`);
+      shopify.toast.show(`Sent v${sendingVersion} to customer`);
     }
   };
 
@@ -187,31 +191,25 @@ function QuoteEditor({ data }: { data: EditorData }) {
   };
 
   /**
-   * Managers approve flagged lines directly. Reps "request" approval: with no dedicated endpoint in the
-   * contract yet, this saves the draft and posts an internal note naming the lines (see report).
+   * Managers and admins approve flagged lines (`approve-floor`). Reps ask for approval
+   * (`request-floor-approval`: no status change, an event row and a notification to managers).
+   * Both need server line ids, so unsaved edits are saved first.
    */
   const requestOrGrantApproval = async () => {
-    const saved = await saveDraft();
+    const saved = dirty ? await saveDraft(state, "Draft saved") : quote;
     if (!saved) return;
-    if (me?.isManager) {
-      const q = await run("approve", () => api.approveFloor(quote.id, {}));
+    const lineIds = flaggedLineIds(stateFromQuote(saved).lines, floorPct);
+    if (perms.canApproveFloor) {
+      const q = await run("approve", () => api.approveFloor(quote.id, lineIds.length > 0 ? { lineIds } : {}));
       if (q) {
         adopt(q);
         shopify.toast.show("Floor exceptions approved");
       }
       return;
     }
-    const names = floorViolations(stateFromQuote(saved).lines, floorPct)
-      .map((v) => `${v.line.sku ?? v.line.title} at ${v.marginPct ?? "?"}%`)
-      .join(", ");
-    const msg = await run("approve", () =>
-      api.postMessage(quote.id, {
-        internal: true,
-        body: `Manager approval requested for ${number} (floor ${floorPct}%): ${names || "flagged lines"}.`,
-      }),
-    );
-    if (msg) {
-      setQuote((prev) => ({ ...prev, messages: [...prev.messages, msg] }));
+    const q = await run("approve", () => api.requestFloorApproval(quote.id, lineIds.length > 0 ? { lineIds } : {}));
+    if (q) {
+      setQuote((prev) => ({ ...prev, events: q.events ?? prev.events }));
       setApprovalRequested(true);
       shopify.toast.show("Approval requested from a manager");
     }
@@ -237,14 +235,25 @@ function QuoteEditor({ data }: { data: EditorData }) {
       const variants = (Array.from(picked as unknown as unknown[]) as unknown[])
         .map(fromPickerItem)
         .filter((v): v is NonNullable<typeof v> => v !== null);
-      if (variants.length > 0) setState((s) => addVariants(s, variants));
+      if (variants.length === 0) return;
+      // There is no variant lookup route (API-17): the server snapshots the buyer's list price and the inventory
+      // cost when it first sees the line, so save right away and render cost and margin from the response.
+      const next = addVariants(state, variants);
+      setState(next);
+      await saveDraft(next, variants.length === 1 ? "Product added" : "Products added");
     } catch (e) {
       setError(errorMessage(e));
     }
   };
 
-  const sendMessage = async (body: string, internal: boolean) => {
-    const m: StaffMessage = await api.postMessage(quote.id, { body, internal });
+  const sendMessage = async (body: string, internal: boolean, files: File[]) => {
+    const attachments: Attachment[] = [];
+    for (const f of files) attachments.push(await uploadAttachment(api, quote.id, f, f));
+    const m: StaffMessage = await api.postMessage(quote.id, {
+      body,
+      internal,
+      ...(attachments.length > 0 ? { attachments } : {}),
+    });
     setQuote((prev) => ({ ...prev, messages: [...prev.messages, m] }));
   };
 
@@ -259,7 +268,6 @@ function QuoteEditor({ data }: { data: EditorData }) {
 
   const statusLine = quote.latestChangeRequest ? waitingLabel(quote.waitingSince, now) : "";
   const customerFirst = quote.customerName.split(" ")[0] ?? quote.customerName;
-  const hasUnsetCost = totals.marginPartial;
 
   return (
     <s-page heading={`${number} · ${quote.title}`} inlineSize="large">
@@ -273,7 +281,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
       <s-button slot="secondary-actions" commandFor="preview-modal" command="--show">
         Preview as customer
       </s-button>
-      <s-button slot="secondary-actions" onClick={saveDraft} loading={busy === "save"} disabled={readOnly || !dirty}>
+      <s-button slot="secondary-actions" onClick={() => void saveDraft()} loading={busy === "save"} disabled={readOnly || !dirty}>
         Save draft
       </s-button>
       <s-button
@@ -290,8 +298,8 @@ function QuoteEditor({ data }: { data: EditorData }) {
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
       {floorIds.length > 0 ? (
         <s-banner tone="critical" heading="Manager approval needed to send">
-          The server found {floorIds.length} line{floorIds.length === 1 ? "" : "s"} under the price floor. Raise the price or request
-          approval.
+          {floorIds.length} line{floorIds.length === 1 ? " is" : "s are"} under the price floor or missing a cost. Raise the price or{" "}
+          {perms.canApproveFloor ? "approve the exception" : "request approval"}.
         </s-banner>
       ) : null}
       {quote.latestChangeRequest ? (
@@ -326,6 +334,16 @@ function QuoteEditor({ data }: { data: EditorData }) {
             <s-text>{quote.customerName}</s-text>
           </s-stack>
           <s-stack gap="small-500">
+            <s-text color="subdued">Contact</s-text>
+            <s-text type="strong">{contact.name}</s-text>
+            <s-text>{contact.phone ?? "No phone"}</s-text>
+          </s-stack>
+          <s-stack gap="small-500">
+            <s-text color="subdued">Payment terms</s-text>
+            <s-text type="strong">{quote.paymentTerms ?? "Not set"}</s-text>
+            <s-text color="subdued">From the company in Shopify</s-text>
+          </s-stack>
+          <s-stack gap="small-500">
             <s-text color="subdued">Job · PO</s-text>
             <s-text type="strong">{quote.job?.name ?? quote.jobName ?? "No job"}</s-text>
             <s-text>{quote.poNumber ? `PO ${quote.poNumber}` : "No PO"}</s-text>
@@ -353,6 +371,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
           </s-select>
           <s-date-field
             label="Prices good until"
+            details={state.expiresOn ? undefined : "Blank uses the default expiry when sent"}
             value={state.expiresOn}
             disabled={readOnly}
             onChange={(e) => setState((s) => ({ ...s, expiresOn: e.currentTarget.value }))}
@@ -368,12 +387,13 @@ function QuoteEditor({ data }: { data: EditorData }) {
 
       {/* ------------------------------------------------------------------ lines */}
       <s-section heading="Line items" padding="none" accessibilityLabel="Line items">
-        <s-button slot="primary-action" onClick={addProducts} disabled={readOnly}>
+        <s-button slot="primary-action" onClick={addProducts} disabled={readOnly || busy !== null}>
           Add product
         </s-button>
         <LinesTable
           lines={state.lines}
           floorPct={floorPct}
+          currencyCode={quote.currencyCode}
           changes={changes}
           versionLabel={`v${versionNo}`}
           disabled={readOnly}
@@ -385,17 +405,18 @@ function QuoteEditor({ data }: { data: EditorData }) {
 
         {violations.length > 0 ? (
           <s-box padding="base">
-            <s-banner tone="critical" heading={`${violations.length} line${violations.length === 1 ? "" : "s"} below the ${floorPct}% floor`}>
+            <s-banner tone="critical" heading={`${violations.length} line${violations.length === 1 ? "" : "s"} need${violations.length === 1 ? "s" : ""} manager approval`}>
               <s-stack gap="small-300">
                 {violations.map((v) => (
                   <s-text key={v.line.key}>
-                    {v.line.sku ?? v.line.title}: {v.marginPct?.toFixed(1)}% margin
+                    {v.line.sku ?? v.line.title}:{" "}
+                    {v.reason === "unknown_cost" ? "unknown cost" : `${v.marginPct?.toFixed(1)}% margin, below the ${floorPct}% floor`}
                   </s-text>
                 ))}
-                {approvalRequested && !me?.isManager ? <s-text color="subdued">Approval requested. A manager will review it.</s-text> : null}
+                {approvalRequested && !perms.canApproveFloor ? <s-text color="subdued">Approval requested. A manager will review it.</s-text> : null}
               </s-stack>
-              <s-button slot="secondary-actions" onClick={requestOrGrantApproval} loading={busy === "approve"} disabled={readOnly}>
-                {me?.isManager ? "Approve floor exceptions" : "Request manager approval"}
+              <s-button slot="secondary-actions" onClick={requestOrGrantApproval} loading={busy === "approve"} disabled={readOnly || pendingSnapshot}>
+                {perms.canApproveFloor ? "Approve floor exceptions" : "Request manager approval"}
               </s-button>
             </s-banner>
           </s-box>
@@ -422,7 +443,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
             <s-stack gap="small-300" accessibilityLabel="Totals">
               <s-stack direction="inline" justifyContent="space-between">
                 <s-text>Subtotal</s-text>
-                <s-text>{formatMoney(totals.subtotalCents)}</s-text>
+                <s-text>{money(totals.subtotalCents)}</s-text>
               </s-stack>
               <s-stack direction="inline" justifyContent="space-between" alignItems="center">
                 <s-text>Freight</s-text>
@@ -444,7 +465,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
               <s-divider />
               <s-stack direction="inline" justifyContent="space-between">
                 <s-text type="strong">Total</s-text>
-                <s-text type="strong">{formatMoney(totals.totalCents)}</s-text>
+                <s-text type="strong">{money(totals.totalCents)}</s-text>
               </s-stack>
               <s-stack direction="inline" justifyContent="space-between">
                 <s-text>Quote margin</s-text>
@@ -452,7 +473,13 @@ function QuoteEditor({ data }: { data: EditorData }) {
                   {totals.marginPct === null ? "n/a" : `${totals.marginPct.toFixed(1)}%`}
                 </s-text>
               </s-stack>
-              {hasUnsetCost ? <s-text color="subdued">Some line costs are filled in when you save.</s-text> : null}
+              {totals.unknownCostCount > 0 ? (
+                <s-text color="subdued">
+                  Margin leaves out {totals.unknownCostCount} line{totals.unknownCostCount === 1 ? "" : "s"} with unknown cost.
+                </s-text>
+              ) : pendingSnapshot ? (
+                <s-text color="subdued">Cost fills in when the new lines are saved.</s-text>
+              ) : null}
             </s-stack>
           </s-grid>
         </s-box>
@@ -462,7 +489,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
       <s-section heading="Notes" accessibilityLabel="Notes">
         <s-grid gridTemplateColumns="repeat(auto-fit, minmax(260px, 1fr))" gap="base">
           <s-text-area
-            label="Job notes for customer"
+            label="Job notes (visible to customer)"
             details="Shows on the quote and PDF"
             rows={4}
             value={state.repNote}
@@ -470,6 +497,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
             onInput={(e) => setState((s) => ({ ...s, repNote: e.currentTarget.value }))}
           />
           <s-box padding="small" background="subdued" border="base" borderStyle="dashed" borderRadius="base">
+            <s-badge tone="warning">Internal only</s-badge>
             <s-text-area
               label="Internal note"
               details="Sales team only, never shown to the customer"
@@ -488,6 +516,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
           messages={quote.messages}
           customerName={customerFirst}
           savedReplies={data.savedReplies}
+          manageRepliesHref="/app/settings#saved-replies"
           onSend={sendMessage}
         />
       </s-section>
@@ -502,23 +531,30 @@ function QuoteEditor({ data }: { data: EditorData }) {
       ) : null}
 
       {/* ------------------------------------------------------------------ modals */}
-      <CustomerPreview id="preview-modal" versionNo={versionNo} number={number} title={quote.title} state={state} />
+      <CustomerPreview id="preview-modal" versionNo={versionNo} number={number} title={quote.title} currencyCode={quote.currencyCode} state={state} />
 
       <s-modal id="send-modal" heading={`Send v${versionNo} to ${quote.customerName}?`}>
         <s-stack gap="small">
           <s-text>
-            {state.lines.length} item{state.lines.length === 1 ? "" : "s"} · total {formatMoney(totals.totalCents)}
+            {state.lines.length} item{state.lines.length === 1 ? "" : "s"} · total {money(totals.totalCents)}
             {state.expiresOn ? ` · prices good until ${state.expiresOn}` : " · default expiry applies"}
           </s-text>
           <s-text color="subdued">The customer is notified by email and text. Any unsaved edits are saved first.</s-text>
           {violations.length > 0 ? (
             <s-banner tone="critical">
-              {violations.length} line{violations.length === 1 ? " is" : "s are"} under the floor. Sending will be refused until a
-              manager approves.
+              {violations.length} line{violations.length === 1 ? " needs" : "s need"} manager approval (under the floor or unknown
+              cost). Send is blocked until a manager approves.
             </s-banner>
           ) : null}
         </s-stack>
-        <s-button slot="primary-action" variant="primary" commandFor="send-modal" command="--hide" onClick={sendRevision}>
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          commandFor="send-modal"
+          command="--hide"
+          disabled={violations.length > 0 || pendingSnapshot}
+          onClick={sendRevision}
+        >
           {`Send v${versionNo}`}
         </s-button>
         <s-button slot="secondary-actions" commandFor="send-modal" command="--hide">

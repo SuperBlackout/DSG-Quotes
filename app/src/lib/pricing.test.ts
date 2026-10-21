@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPercentOff,
+  approvalReason,
+  formatMoneyIn,
   computeTotals,
   floorToBps,
   floorViolations,
@@ -138,6 +140,46 @@ describe("price floor", () => {
     const approved = mockup.map((l, i) => (i === 4 ? { ...l, floorApproved: true } : l));
     expect(floorViolations(approved, 15)).toHaveLength(0);
     expect(floorViolations(mockup, 5)).toHaveLength(0);
+  });
+});
+
+describe("unknown cost", () => {
+  const unknown = (approved = false): PricedLine => ({ ...L(1, 5000, null, 5000, approved), costUnknown: true });
+
+  it("always needs approval until a manager approves, with a null margin", () => {
+    expect(approvalReason(unknown(), 15)).toBe("unknown_cost");
+    expect(approvalReason(unknown(true), 15)).toBeNull();
+    const v = floorViolations([L(1, 100, 50, 100), unknown()], 15);
+    expect(v).toHaveLength(1);
+    expect(v[0]).toMatchObject({ index: 1, reason: "unknown_cost", marginPct: null });
+  });
+
+  it("does not flag an unsaved line (no cost yet, not unknown)", () => {
+    expect(approvalReason(L(1, 5000, null, 5000), 15)).toBeNull();
+  });
+
+  it("reports the reason for below-floor lines", () => {
+    expect(approvalReason(L(1, 10000, 9000, 10000), 15)).toBe("below_floor");
+  });
+
+  it("keeps margin partial and counts the flagged lines", () => {
+    const t = computeTotals([L(1, 1000, 600, 1000), unknown()], 0);
+    expect(t.marginPct).toBe(40);
+    expect(t.marginPartial).toBe(true);
+    expect(t.unknownCostCount).toBe(1);
+    expect(computeTotals([L(1, 1000, null, 1000)]).unknownCostCount).toBe(0);
+  });
+});
+
+describe("currency formatting", () => {
+  it("formats USD and falls back for missing or bad codes", () => {
+    expect(formatMoneyIn(123450, "USD")).toBe("$1,234.50");
+    expect(formatMoneyIn(123450, undefined)).toBe("$1,234.50");
+    expect(formatMoneyIn(123450, "nope")).toBe("$1,234.50");
+  });
+
+  it("formats another currency", () => {
+    expect(formatMoneyIn(123450, "CAD")).toContain("1,234.50");
   });
 });
 
