@@ -84,6 +84,26 @@ services:
       - key: SESSION_SECRET
         generateValue: true
 
+  - type: web
+    name: dsg-quotes-admin
+    runtime: node
+    region: ohio
+    plan: starter
+    rootDir: .
+    # The embedded admin app (sales inbox and quote editor). Forwards /api/* to dsg-quotes-web.
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F app build
+    startCommand: pnpm -F app start
+    healthCheckPath: /healthz
+    autoDeploy: false
+    envVars:
+      - fromGroup: dsg-quotes-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: dsg-quotes-db, property: connectionString }
+      - key: NODE_ENV
+        value: production
+      - key: QUOTES_API_ORIGIN
+        value: https://dsg-quotes-web.onrender.com
+
   - type: worker
     name: dsg-quotes-worker
     runtime: node
