@@ -4,13 +4,16 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
-    "build": "react-router build",
+    "build": "pnpm prisma:generate && react-router build",
     "start": "react-router-serve ./build/server/index.js",
     "dev": "react-router dev",
+    "prisma:generate": "prisma generate --schema ../apps/api/prisma/schema.prisma",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test": "vitest run"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@prisma/client": "^6.19.0",
     "@react-router/dev": "7.18.2",
@@ -28,10 +31,12 @@
     "vite-tsconfig-paths": "^6.0.4"
   },
   "devDependencies": {
+    "@shopify/app-bridge-types": "0.7.2",
     "@shopify/polaris-types": "1.0.1",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.25",
     "@types/react-dom": "^18.3.7",
+    "prisma": "^6.19.3",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^2.1.0"

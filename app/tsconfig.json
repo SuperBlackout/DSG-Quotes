@@ -5,7 +5,7 @@
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "jsx": "react-jsx",
-    "types": ["@react-router/node", "vite/client", "@shopify/polaris-types"],
+    "types": ["@react-router/node", "vite/client", "@shopify/polaris-types", "@shopify/app-bridge-types"],
     "rootDirs": [".", "./.react-router/types"],
     "allowSyntheticDefaultImports": true,
     "declaration": false
