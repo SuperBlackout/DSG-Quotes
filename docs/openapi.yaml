@@ -1,0 +1,1242 @@
+openapi: 3.0.3
+info:
+  title: DSG Quotes API
+  version: 0.1.0
+  description: |
+    Contract for the DSG Quotes app. Source of truth for backend, storefront, customer-account, admin and QA.
+    Changes go through a PR touching only `docs/` and `packages/shared/` (tag the lead), then
+    `pnpm -F shared gen:types` regenerates `packages/shared/src/api.ts`.
+
+    **Customer (`/c`) routes** are reached via the Shopify app proxy (`/apps/quotes/c/...`, HMAC verified) or with a
+    customer-account session token, and are always scoped to the caller's company location.
+    Customer schemas never contain `cost`, `marginPct`, `internalNote` or internal messages
+    (CLAUDE.md rules 4 and 5); a contract test enforces it.
+
+    **Staff (`/s`) routes** use the Shopify admin session token (embedded app).
+
+    Money is a decimal string with 2 places (e.g. "1234.50"). Ids are opaque strings; Shopify ids are GIDs.
+    Timestamps are ISO 8601 UTC.
+servers:
+  - url: /apps/quotes
+    description: App proxy (storefront and customer account)
+  - url: /api
+    description: Embedded admin app server
+  - url: http://localhost:4010
+    description: Prism mock (`pnpm -F shared mock`)
+tags:
+  - name: customer
+    description: "/c routes. Customer-safe shapes only."
+  - name: staff
+    description: "/s routes. Includes cost, margin and internal notes."
+  - name: webhooks
+    description: Inbound provider and Shopify webhooks (signature verified, not called by front-ends).
+security:
+  - customerSession: []
+paths:
+  /c/quotes:
+    get:
+      tags: [customer]
+      operationId: listCustomerQuotes
+      summary: List my company's quotes
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/QuoteStatus" }
+        - name: jobId
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          description: Free-text search over number, title, job, PO.
+          schema: { type: string }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Quotes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CustomerQuoteSummary" }
+                  nextCursor: { type: string, nullable: true }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [customer]
+      operationId: createCustomerQuote
+      summary: Create a draft quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateQuoteRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/from-cart:
+    post:
+      tags: [customer]
+      operationId: createQuoteFromCart
+      summary: Copy the current cart into a new or existing draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FromCartRequest" }
+      responses:
+        "201":
+          description: Draft created or updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+    get:
+      tags: [customer]
+      operationId: getCustomerQuote
+      summary: Quote with sent versions, lines (no cost) and customer-visible messages
+      responses:
+        "200":
+          description: Quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [customer]
+      operationId: updateCustomerQuote
+      summary: Update header fields (lines only editable in DRAFT)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateQuoteRequest" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [customer]
+      operationId: deleteCustomerQuote
+      summary: Soft delete a DRAFT (transition DELETE, status ARCHIVED)
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/lines:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+    post:
+      tags: [customer]
+      operationId: addCustomerQuoteLine
+      summary: Add a line (DRAFT only). Price is snapshotted from the buyer's catalog.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddLineRequest" }
+      responses:
+        "201":
+          description: Line added; returns the updated quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/lines/{lineId}:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+      - $ref: "#/components/parameters/LineId"
+    patch:
+      tags: [customer]
+      operationId: updateCustomerQuoteLine
+      summary: Change quantity or note (DRAFT only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateLineRequest" }
+      responses:
+        "200":
+          description: Updated quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [customer]
+      operationId: deleteCustomerQuoteLine
+      summary: Remove a line (DRAFT only)
+      responses:
+        "200":
+          description: Updated quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/submit:
+    post:
+      tags: [customer]
+      operationId: submitCustomerQuote
+      summary: DRAFT to SUBMITTED
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/withdraw:
+    post:
+      tags: [customer]
+      operationId: withdrawCustomerQuote
+      summary: SUBMITTED back to DRAFT
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/accept:
+    post:
+      tags: [customer]
+      operationId: acceptCustomerQuote
+      summary: QUOTE_READY to ACCEPTED (current version)
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                versionNo:
+                  type: integer
+                  description: Version the customer saw; rejected with VERSION_MISMATCH if a newer one was sent.
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/request-changes:
+    post:
+      tags: [customer]
+      operationId: requestChangesCustomerQuote
+      summary: QUOTE_READY to CHANGES_REQUESTED
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string, minLength: 1, maxLength: 5000 }
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/decline:
+    post:
+      tags: [customer]
+      operationId: declineCustomerQuote
+      summary: Close the quote as DECLINED
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 2000 }
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/reopen:
+    post:
+      tags: [customer]
+      operationId: reopenCustomerQuote
+      summary: ACCEPTED to IN_REVIEW (customer wants a change before buying)
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/duplicate:
+    post:
+      tags: [customer]
+      operationId: duplicateCustomerQuote
+      summary: Copy any quote into a new DRAFT (prices re-snapshotted)
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "201":
+          description: New draft
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/checkout:
+    post:
+      tags: [customer]
+      operationId: checkoutCustomerQuote
+      summary: Accept to buy. Requires ACCEPTED and not expired (isPurchasable); creates or reuses the draft order.
+      description: Idempotent. Returns 409 NOT_PURCHASABLE if the quote is not ACCEPTED or has expired.
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200":
+          description: Redirect target
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invoiceUrl, draftOrderId]
+                properties:
+                  invoiceUrl: { type: string, format: uri }
+                  draftOrderId: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+    get:
+      tags: [customer]
+      operationId: listCustomerMessages
+      summary: Conversation (internal notes are never returned)
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Messages, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CustomerMessage" }
+                  nextCursor: { type: string, nullable: true }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [customer]
+      operationId: postCustomerMessage
+      summary: Post a message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostMessageRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerMessage" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/attachments/upload-url:
+    post:
+      tags: [customer]
+      operationId: createCustomerAttachmentUpload
+      summary: Signed upload URL for a message attachment
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadUrlRequest" }
+      responses:
+        "200":
+          description: Upload target
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadUrl" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/notification-prefs:
+    get:
+      tags: [customer]
+      operationId: getNotificationPrefs
+      summary: My notification preferences
+      responses:
+        "200":
+          description: Prefs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationPrefs" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      tags: [customer]
+      operationId: putNotificationPrefs
+      summary: Replace my notification preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationPrefs" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationPrefs" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/active-quote:
+    get:
+      tags: [customer]
+      operationId: getActiveQuote
+      summary: Draft that "Add to Quote" targets (header chip)
+      responses:
+        "200":
+          description: Active quote, or null quoteId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActiveQuote" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      tags: [customer]
+      operationId: setActiveQuote
+      summary: Choose the target draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quoteId]
+              properties:
+                quoteId: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActiveQuote" }
+        default: { $ref: "#/components/responses/Error" }
+
+  # ------------------------------------------------------------------ staff
+  /s/quotes:
+    get:
+      tags: [staff]
+      operationId: listStaffQuotes
+      summary: Sales inbox
+      security: [{ staffSession: [] }]
+      parameters:
+        - name: tab
+          in: query
+          schema:
+            type: string
+            enum: [needs_response, unassigned, waiting_customer, accepted, expiring, all]
+        - name: rep
+          in: query
+          schema: { type: string }
+        - name: team
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Inbox rows
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StaffQuoteSummary" }
+                  nextCursor: { type: string, nullable: true }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [staff]
+      operationId: createStaffQuote
+      summary: Create a quote on behalf of a customer
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StaffCreateQuoteRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}:
+    get:
+      tags: [staff]
+      operationId: getStaffQuote
+      summary: Full quote incl. cost, margin, internal notes and all versions
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200":
+          description: Quote
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/claim:
+    post:
+      tags: [staff]
+      operationId: claimStaffQuote
+      summary: Assign to me; SUBMITTED or CHANGES_REQUESTED to IN_REVIEW
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/assign:
+    post:
+      tags: [staff]
+      operationId: assignStaffQuote
+      summary: Assign to a rep or team (no status change)
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                repId: { type: string, nullable: true }
+                teamId: { type: string, nullable: true }
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/draft-revision:
+    put:
+      tags: [staff]
+      operationId: saveDraftRevision
+      summary: Save working lines, freight, expiry and notes (not visible to the customer)
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DraftRevisionRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/send:
+    post:
+      tags: [staff]
+      operationId: sendStaffRevision
+      summary: Freeze working lines into version N+1 and move to QUOTE_READY
+      description: |
+        Returns 422 FLOOR_APPROVAL_REQUIRED (with `details.lineIds`) if any line is under the rep's
+        price floor and no manager approval exists.
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/approve-floor:
+    post:
+      tags: [staff]
+      operationId: approveFloor
+      summary: Manager approval for lines under the price floor
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lineIds:
+                  type: array
+                  items: { type: string }
+                  description: Omit to approve every flagged line.
+                note: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/reopen:
+    post:
+      tags: [staff]
+      operationId: reopenStaffQuote
+      summary: ACCEPTED to IN_REVIEW; the linked draft order is discarded on the next checkout
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/decline:
+    post:
+      tags: [staff]
+      operationId: declineStaffQuote
+      summary: Close the quote as DECLINED
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 2000 }
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+    get:
+      tags: [staff]
+      operationId: listStaffMessages
+      summary: Conversation including internal notes
+      security: [{ staffSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Messages, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StaffMessage" }
+                  nextCursor: { type: string, nullable: true }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [staff]
+      operationId: postStaffMessage
+      summary: Post to the customer, or an internal note (internal true never notifies the customer)
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/PostMessageRequest"
+                - type: object
+                  properties:
+                    internal: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffMessage" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/reports/summary:
+    get:
+      tags: [staff]
+      operationId: getStaffSummary
+      summary: Inbox tiles
+      security: [{ staffSession: [] }]
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffSummary" }
+        default: { $ref: "#/components/responses/Error" }
+
+  # --------------------------------------------------------------- webhooks
+  /hooks/email-inbound:
+    post:
+      tags: [webhooks]
+      operationId: hookEmailInbound
+      summary: Inbound email reply (provider signature verified). Becomes a Message with channel EMAIL.
+      security: [{ providerSignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Provider payload (Postmark inbound JSON); only the fields below are relied on.
+              properties:
+                To: { type: string }
+                From: { type: string }
+                TextBody: { type: string }
+                StrippedTextReply: { type: string }
+              additionalProperties: true
+      responses:
+        "200": { description: Accepted }
+        default: { $ref: "#/components/responses/Error" }
+  /hooks/twilio-inbound:
+    post:
+      tags: [webhooks]
+      operationId: hookTwilioInbound
+      summary: Inbound SMS (X-Twilio-Signature verified). Handles STOP/HELP, else Message with channel SMS.
+      security: [{ providerSignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                From: { type: string }
+                To: { type: string }
+                Body: { type: string }
+                MessageSid: { type: string }
+              additionalProperties: true
+      responses:
+        "200": { description: Accepted (TwiML body optional) }
+        default: { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    customerSession:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Customer account session token (Bearer), or app proxy HMAC query signature from the storefront.
+    staffSession:
+      type: http
+      scheme: bearer
+      description: Shopify admin session token (JWT).
+    providerSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: Provider specific signature header (Postmark basic auth / X-Twilio-Signature).
+  parameters:
+    QuoteId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    LineId:
+      name: lineId
+      in: path
+      required: true
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { code: NOT_FOUND, message: Quote not found }
+    CustomerQuoteOk:
+      description: Updated quote
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CustomerQuote" }
+    StaffQuoteOk:
+      description: Updated quote
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/StaffQuote" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            Stable machine code. Used values: BAD_REQUEST, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND,
+            INVALID_TRANSITION, NOT_PURCHASABLE, VERSION_MISMATCH, NOT_EDITABLE, FLOOR_APPROVAL_REQUIRED,
+            VALIDATION_FAILED, RATE_LIMITED, INTERNAL.
+          example: INVALID_TRANSITION
+        message: { type: string, example: "SUBMIT is not allowed from ORDERED" }
+        details:
+          type: object
+          additionalProperties: true
+    Money:
+      type: string
+      pattern: '^-?\d+\.\d{2}$'
+      example: "1234.50"
+    QuoteStatus:
+      type: string
+      enum: [DRAFT, SUBMITTED, IN_REVIEW, QUOTE_READY, CHANGES_REQUESTED, ACCEPTED, ORDERED, EXPIRED, DECLINED, ARCHIVED]
+    WaitingOn:
+      type: string
+      enum: [customer, sales, none]
+    Address:
+      type: object
+      properties:
+        name: { type: string }
+        company: { type: string }
+        address1: { type: string }
+        address2: { type: string, nullable: true }
+        city: { type: string }
+        province: { type: string }
+        zip: { type: string }
+        country: { type: string, example: US }
+        phone: { type: string, nullable: true }
+    JobRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        poNumber: { type: string, nullable: true }
+        siteAddress: { type: string, nullable: true }
+    NewJob:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        poNumber: { type: string }
+        siteAddress: { type: string }
+    Attachment:
+      type: object
+      required: [url, name, size, mime]
+      properties:
+        url: { type: string, format: uri }
+        name: { type: string }
+        size: { type: integer }
+        mime: { type: string }
+    Pagination:
+      type: object
+      properties:
+        nextCursor: { type: string, nullable: true }
+
+    # ---- customer-safe shapes: NO cost, margin, internalNote, internal messages
+    CustomerQuoteLine:
+      type: object
+      required: [id, variantId, title, qty, listPrice, quotedPrice, lineTotal, position]
+      properties:
+        id: { type: string }
+        variantId: { type: string, description: "gid://shopify/ProductVariant/..." }
+        sku: { type: string, nullable: true }
+        title: { type: string }
+        imageUrl: { type: string, format: uri, nullable: true }
+        qty: { type: integer, minimum: 1 }
+        listPrice: { $ref: "#/components/schemas/Money" }
+        quotedPrice: { $ref: "#/components/schemas/Money" }
+        lineTotal: { $ref: "#/components/schemas/Money" }
+        lineNote: { type: string, nullable: true }
+        position: { type: integer }
+    CustomerQuoteVersion:
+      type: object
+      required: [versionNo, sentAt, subtotal, discountTotal, freight, total, lines]
+      properties:
+        versionNo: { type: integer, minimum: 1 }
+        sentAt: { type: string, format: date-time }
+        subtotal: { $ref: "#/components/schemas/Money" }
+        discountTotal: { $ref: "#/components/schemas/Money" }
+        freight: { $ref: "#/components/schemas/Money" }
+        taxEstimate: { type: string, nullable: true, pattern: '^-?\d+\.\d{2}$', example: "1234.50" }
+        total: { $ref: "#/components/schemas/Money" }
+        repNote:
+          type: string
+          nullable: true
+          description: Customer-visible job notes from the rep.
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/CustomerQuoteLine" }
+    CustomerMessage:
+      type: object
+      required: [id, authorType, body, attachments, channel, createdAt]
+      properties:
+        id: { type: string }
+        authorType: { type: string, enum: [CUSTOMER, STAFF, SYSTEM] }
+        authorName: { type: string, nullable: true }
+        body: { type: string }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/Attachment" }
+        channel: { type: string, enum: [WEB, EMAIL, SMS] }
+        readAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CustomerQuoteActions:
+      type: object
+      description: Server-computed so front-ends never re-implement the state machine.
+      required: [canEditLines, canSubmit, canWithdraw, canAccept, canRequestChanges, canBuy, canReopen, canDelete, canDecline]
+      properties:
+        canEditLines: { type: boolean }
+        canSubmit: { type: boolean }
+        canWithdraw: { type: boolean }
+        canAccept: { type: boolean }
+        canRequestChanges: { type: boolean }
+        canBuy: { type: boolean, description: "isPurchasable(status, expiresAt)" }
+        canReopen: { type: boolean }
+        canDelete: { type: boolean }
+        canDecline: { type: boolean }
+    CustomerQuoteSummary:
+      type: object
+      required: [id, number, title, status, waitingOn, lineCount, total, updatedAt, actions]
+      properties:
+        id: { type: string }
+        number: { type: integer, example: 10482 }
+        displayNumber: { type: string, example: Q-10482 }
+        title: { type: string }
+        status: { $ref: "#/components/schemas/QuoteStatus" }
+        waitingOn: { $ref: "#/components/schemas/WaitingOn" }
+        job: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/JobRef" }] }
+        currentVersion: { type: integer }
+        lineCount: { type: integer }
+        total: { $ref: "#/components/schemas/Money" }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        ownerName: { type: string }
+        orderId: { type: string, nullable: true }
+        updatedAt: { type: string, format: date-time }
+        actions: { $ref: "#/components/schemas/CustomerQuoteActions" }
+    CustomerQuote:
+      allOf:
+        - $ref: "#/components/schemas/CustomerQuoteSummary"
+        - type: object
+          required: [lines, versions, messages]
+          properties:
+            poNumber: { type: string, nullable: true }
+            neededBy: { type: string, format: date, nullable: true }
+            shipTo: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/Address" }] }
+            notesToSales: { type: string, nullable: true }
+            watchers:
+              type: array
+              items: { type: string, format: email }
+            assignedRepName: { type: string, nullable: true }
+            lines:
+              type: array
+              description: Customer's working draft lines when DRAFT, otherwise the latest sent version's lines.
+              items: { $ref: "#/components/schemas/CustomerQuoteLine" }
+            versions:
+              type: array
+              description: Sent revisions only, ascending.
+              items: { $ref: "#/components/schemas/CustomerQuoteVersion" }
+            messages:
+              type: array
+              description: Latest page of customer-visible messages (use the messages endpoint for more).
+              items: { $ref: "#/components/schemas/CustomerMessage" }
+    CreateQuoteRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        jobId: { type: string }
+        newJob: { $ref: "#/components/schemas/NewJob" }
+        poNumber: { type: string }
+        neededBy: { type: string, format: date }
+        setActive: { type: boolean, default: true }
+    UpdateQuoteRequest:
+      type: object
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        jobId: { type: string, nullable: true }
+        newJob: { $ref: "#/components/schemas/NewJob" }
+        poNumber: { type: string, nullable: true }
+        neededBy: { type: string, format: date, nullable: true }
+        shipTo: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/Address" }] }
+        notesToSales: { type: string, nullable: true, maxLength: 5000 }
+        watchers:
+          type: array
+          items: { type: string, format: email }
+    AddLineRequest:
+      type: object
+      required: [variantId, qty]
+      properties:
+        variantId: { type: string }
+        qty: { type: integer, minimum: 1, maximum: 100000 }
+        lineNote: { type: string }
+    UpdateLineRequest:
+      type: object
+      minProperties: 1
+      properties:
+        qty: { type: integer, minimum: 1, maximum: 100000 }
+        lineNote: { type: string, nullable: true }
+    CartLine:
+      type: object
+      required: [variantId, qty]
+      properties:
+        variantId: { type: string }
+        qty: { type: integer, minimum: 1 }
+    FromCartRequest:
+      type: object
+      required: [cartLines, target]
+      properties:
+        cartLines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CartLine" }
+        target:
+          oneOf:
+            - type: object
+              required: [mode, title]
+              properties:
+                mode: { type: string, enum: [new] }
+                title: { type: string }
+                jobId: { type: string }
+                newJob: { $ref: "#/components/schemas/NewJob" }
+                poNumber: { type: string }
+                neededBy: { type: string, format: date }
+                notesToSales: { type: string }
+            - type: object
+              required: [mode, quoteId]
+              properties:
+                mode: { type: string, enum: [existing] }
+                quoteId: { type: string }
+        submit:
+          type: boolean
+          default: false
+          description: true = "Submit to sales", false = "Save as draft".
+        emptyCart:
+          type: boolean
+          default: false
+          description: Informational; the storefront block clears the cart after a 2xx.
+    SubmitRequest:
+      type: object
+      properties:
+        notesToSales: { type: string }
+        neededBy: { type: string, format: date }
+        poNumber: { type: string }
+    PostMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 10000 }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/Attachment" }
+    UploadUrlRequest:
+      type: object
+      required: [name, size, mime]
+      properties:
+        name: { type: string }
+        size: { type: integer, maximum: 26214400 }
+        mime: { type: string }
+    UploadUrl:
+      type: object
+      required: [uploadUrl, fileUrl, expiresAt]
+      properties:
+        uploadUrl: { type: string, format: uri }
+        fileUrl: { type: string, format: uri }
+        expiresAt: { type: string, format: date-time }
+    ActiveQuote:
+      type: object
+      required: [quoteId]
+      properties:
+        quoteId: { type: string, nullable: true }
+        number: { type: integer, nullable: true }
+        title: { type: string, nullable: true }
+        lineCount: { type: integer, nullable: true }
+    NotificationChannelPref:
+      type: object
+      required: [email, sms]
+      properties:
+        email: { type: boolean }
+        sms: { type: boolean }
+    NotificationPrefs:
+      type: object
+      required: [events, email]
+      properties:
+        events:
+          type: object
+          description: Keyed by event, e.g. QUOTE_READY, NEW_MESSAGE, ACCEPTED, ORDERED, EXPIRING, CHANGES_REQUESTED.
+          additionalProperties: { $ref: "#/components/schemas/NotificationChannelPref" }
+        email: { type: string, format: email }
+        phone: { type: string, nullable: true, example: "+13125550123" }
+        smsOptIn:
+          type: boolean
+          description: Must be true (with the exact consent text recorded server-side) before any SMS is sent.
+        smsConsentText:
+          type: string
+          description: Exact consent copy shown to the customer; stored with smsOptInAt.
+        smsOptInAt: { type: string, format: date-time, nullable: true, readOnly: true }
+        quietStart: { type: string, nullable: true, example: "19:00" }
+        quietEnd: { type: string, nullable: true, example: "07:00" }
+        timezone: { type: string, example: America/New_York }
+        watchers:
+          type: array
+          items: { type: string, format: email }
+
+    # ---- staff shapes (cost, margin, internal notes allowed)
+    StaffQuoteLine:
+      type: object
+      required: [id, variantId, title, qty, listPrice, quotedPrice, lineTotal, position]
+      properties:
+        id: { type: string }
+        variantId: { type: string }
+        sku: { type: string, nullable: true }
+        title: { type: string }
+        imageUrl: { type: string, format: uri, nullable: true }
+        qty: { type: integer, minimum: 1 }
+        listPrice: { $ref: "#/components/schemas/Money" }
+        quotedPrice: { $ref: "#/components/schemas/Money" }
+        cost: { type: string, nullable: true, pattern: '^-?\d+\.\d{2}$', example: "1234.50" }
+        lineTotal: { $ref: "#/components/schemas/Money" }
+        marginPct: { type: number, nullable: true, description: "(quotedPrice - cost) / quotedPrice * 100" }
+        belowFloor: { type: boolean }
+        floorApproved: { type: boolean }
+        lineNote: { type: string, nullable: true }
+        addedBy: { type: string, enum: [CUSTOMER, STAFF, SYSTEM] }
+        position: { type: integer }
+    StaffQuoteVersion:
+      type: object
+      required: [versionNo, sentAt, subtotal, freight, total, lines]
+      properties:
+        versionNo: { type: integer }
+        sentAt: { type: string, format: date-time }
+        sentById: { type: string, nullable: true }
+        subtotal: { $ref: "#/components/schemas/Money" }
+        discountTotal: { $ref: "#/components/schemas/Money" }
+        freight: { $ref: "#/components/schemas/Money" }
+        taxEstimate: { type: string, nullable: true, pattern: '^-?\d+\.\d{2}$', example: "1234.50" }
+        total: { $ref: "#/components/schemas/Money" }
+        marginTotal: { type: string, nullable: true, pattern: '^-?\d+\.\d{2}$', example: "1234.50" }
+        marginPct: { type: number, nullable: true }
+        repNote: { type: string, nullable: true }
+        internalNote: { type: string, nullable: true }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/StaffQuoteLine" }
+    StaffMessage:
+      type: object
+      required: [id, authorType, body, internal, attachments, channel, createdAt]
+      properties:
+        id: { type: string }
+        authorType: { type: string, enum: [CUSTOMER, STAFF, SYSTEM] }
+        authorId: { type: string, nullable: true }
+        authorName: { type: string, nullable: true }
+        body: { type: string }
+        internal: { type: boolean }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/Attachment" }
+        channel: { type: string, enum: [WEB, EMAIL, SMS] }
+        readAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    StaffQuoteSummary:
+      type: object
+      required: [id, number, title, status, waitingOn, customerName, total, updatedAt]
+      properties:
+        id: { type: string }
+        number: { type: integer }
+        displayNumber: { type: string }
+        title: { type: string }
+        status: { $ref: "#/components/schemas/QuoteStatus" }
+        waitingOn: { $ref: "#/components/schemas/WaitingOn" }
+        waitingSince: { type: string, format: date-time, nullable: true }
+        customerName: { type: string }
+        companyName: { type: string, nullable: true }
+        jobName: { type: string, nullable: true }
+        assignedRepId: { type: string, nullable: true }
+        assignedRepName: { type: string, nullable: true }
+        teamId: { type: string, nullable: true }
+        currentVersion: { type: integer }
+        total: { $ref: "#/components/schemas/Money" }
+        marginPct: { type: number, nullable: true }
+        belowFloor: { type: boolean }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    StaffQuoteEvent:
+      type: object
+      required: [id, type, actorType, createdAt]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        actorType: { type: string, enum: [CUSTOMER, STAFF, SYSTEM] }
+        actorId: { type: string, nullable: true }
+        payload: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+    StaffQuote:
+      allOf:
+        - $ref: "#/components/schemas/StaffQuoteSummary"
+        - type: object
+          required: [workingLines, versions, messages]
+          properties:
+            customerId: { type: string }
+            companyId: { type: string, nullable: true }
+            companyLocationId: { type: string, nullable: true }
+            job: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/JobRef" }] }
+            poNumber: { type: string, nullable: true }
+            neededBy: { type: string, format: date, nullable: true }
+            shipTo: { type: object, nullable: true, allOf: [{ $ref: "#/components/schemas/Address" }] }
+            notesToSales: { type: string, nullable: true }
+            watchers:
+              type: array
+              items: { type: string, format: email }
+            draftOrderId: { type: string, nullable: true }
+            orderId: { type: string, nullable: true }
+            latestChangeRequest:
+              type: string
+              nullable: true
+              description: Customer's most recent change-request text (editor callout).
+            workingLines:
+              type: array
+              description: Editable working revision (what Save draft stores).
+              items: { $ref: "#/components/schemas/StaffQuoteLine" }
+            workingFreight: { $ref: "#/components/schemas/Money" }
+            workingRepNote: { type: string, nullable: true }
+            workingInternalNote: { type: string, nullable: true }
+            versions:
+              type: array
+              items: { $ref: "#/components/schemas/StaffQuoteVersion" }
+            messages:
+              type: array
+              items: { $ref: "#/components/schemas/StaffMessage" }
+            events:
+              type: array
+              items: { $ref: "#/components/schemas/StaffQuoteEvent" }
+    StaffCreateQuoteRequest:
+      type: object
+      required: [customerId, title]
+      properties:
+        customerId: { type: string }
+        companyLocationId: { type: string }
+        title: { type: string }
+        jobId: { type: string }
+        newJob: { $ref: "#/components/schemas/NewJob" }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/AddLineRequest" }
+        submit:
+          type: boolean
+          default: false
+    StaffLineInput:
+      type: object
+      required: [variantId, qty, quotedPrice]
+      properties:
+        id: { type: string, description: "Existing working line id; omit for a new line." }
+        variantId: { type: string }
+        qty: { type: integer, minimum: 1 }
+        quotedPrice: { $ref: "#/components/schemas/Money" }
+        lineNote: { type: string, nullable: true }
+    DraftRevisionRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/StaffLineInput" }
+        freight: { $ref: "#/components/schemas/Money" }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        repNote: { type: string, nullable: true, description: Customer-visible job notes. }
+        internalNote: { type: string, nullable: true, description: Staff only. }
+    StaffSummary:
+      type: object
+      required: [needsResponse, openValue, acceptedThisWeek, expiringSoon]
+      properties:
+        needsResponse: { type: integer }
+        unassigned: { type: integer }
+        openValue: { $ref: "#/components/schemas/Money" }
+        acceptedThisWeek: { type: integer }
+        acceptedThisWeekValue: { $ref: "#/components/schemas/Money" }
+        expiringSoon: { type: integer }
