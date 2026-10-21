@@ -1,0 +1,46 @@
+{%- comment -%}
+  DSG Quotes: app embed "Active quote chip" (mockup screen 1 header). Shown only to logged-in customers
+  who have an active draft. Floats bottom-left by default; set "Mount selector" to move it into the header.
+{%- endcomment -%}
+{%- if customer -%}
+  {{ 'dsg-quotes.css' | asset_url | stylesheet_tag }}
+  <div
+    class="dsg-chip{% if block.settings.position == 'right' %} dsg-chip--right{% endif %}"
+    data-dsg-chip
+    data-base="/apps/quotes"
+    data-my-quotes-url="{{ block.settings.my_quotes_url | default: routes.account_url }}"
+    data-mount-selector="{{ block.settings.mount_selector | escape }}"
+    {% if block.settings.accent != blank %}style="--dsg-accent: {{ block.settings.accent }}; --dsg-on-accent: {{ block.settings.on_accent | default: '#ffffff' }}"{% endif %}
+    hidden
+  >
+    <a href="{{ block.settings.my_quotes_url | default: routes.account_url }}" data-dsg-chip-link>
+      <span class="dsg-chip__icon" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h8l4 4v14H7z"/><path d="M10 12h6M10 16h6"/></svg>
+      </span>
+      <span class="dsg-chip__lbl"><small>Adding to quote</small><strong data-dsg-chip-text></strong></span>
+    </a>
+  </div>
+  <script src="{{ 'dsg-quotes-core.js' | asset_url }}" defer></script>
+  <script src="{{ 'dsg-quote-chip.js' | asset_url }}" defer></script>
+  {%- if block.settings.card_buttons -%}
+    <script src="{{ 'dsg-add-to-quote.js' | asset_url }}" defer></script>
+  {%- endif -%}
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Active quote chip",
+  "target": "body",
+  "settings": [
+    { "type": "select", "id": "position", "label": "Floating position", "default": "left", "options": [
+      { "value": "left", "label": "Bottom left" },
+      { "value": "right", "label": "Bottom right" }
+    ] },
+    { "type": "text", "id": "mount_selector", "label": "Mount selector (optional)", "info": "CSS selector of a header element to place the chip in, e.g. header .header__icons. Blank keeps it floating." },
+    { "type": "text", "id": "my_quotes_url", "label": "My Quotes URL", "info": "Customer account page for quotes. {id} is replaced by the quote id." },
+    { "type": "checkbox", "id": "card_buttons", "label": "Enable collection-card buttons", "default": true, "info": "Loads the script for the optional quote-card-button snippet." },
+    { "type": "color", "id": "accent", "label": "Accent color" },
+    { "type": "color", "id": "on_accent", "label": "Text on accent color", "default": "#ffffff" }
+  ]
+}
+{% endschema %}
