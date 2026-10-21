@@ -1,11 +1,12 @@
-import type { Job, Prisma, Quote } from "@prisma/client";
+import type { Job, Prisma, PrismaClient, Quote, Staff } from "@prisma/client";
 import type { Schemas } from "shared";
 import type { AppDeps, Tx } from "../context";
 import { ApiError, notFound } from "../errors";
-import { customerQuote } from "../serializers/customer";
+import { customerQuote, type SummaryExtras } from "../serializers/customer";
 import type { BuyerContext, VariantPricing } from "../shopify/types";
 import { customerVisibleLines, customerLines, refreshDerived } from "./lines";
-import { D, parseMoney } from "./money";
+import { D, assertFits, fmt, parseMoney } from "./money";
+import { dateOnlyToDate } from "../dates";
 import { lockQuote, writeEvent } from "./transitions";
 
 export const MESSAGE_PAGE = 50;
@@ -36,6 +37,35 @@ export async function getScopedQuote(tx: Tx, deps: AppDeps, buyer: BuyerContext,
   return locked;
 }
 
+/**
+ * assignedRepName, unreadCount and previousTotal for a page of quotes in two queries.
+ * unreadCount = customer-visible messages (never internal notes) written by staff or the system that this customer has not read.
+ */
+export async function summaryExtras(
+  db: Pick<PrismaClient, "message" | "quoteVersion">,
+  quotes: { id: string; assignedRep?: Pick<Staff, "name"> | null }[],
+): Promise<Map<string, SummaryExtras>> {
+  const ids = quotes.map((q) => q.id);
+  const out = new Map<string, SummaryExtras>(quotes.map((q) => [q.id, { assignedRepName: q.assignedRep?.name ?? null, unreadCount: 0, previousTotal: null }]));
+  if (ids.length === 0) return out;
+  const [unread, versions] = await Promise.all([
+    db.message.groupBy({
+      by: ["quoteId"],
+      where: { quoteId: { in: ids }, internal: false, authorType: { not: "CUSTOMER" }, readAt: null },
+      _count: { _all: true },
+    }),
+    db.quoteVersion.findMany({ where: { quoteId: { in: ids } }, select: { quoteId: true, versionNo: true, total: true }, orderBy: { versionNo: "desc" } }),
+  ]);
+  for (const u of unread) out.get(u.quoteId)!.unreadCount = u._count._all;
+  const seen = new Map<string, number>();
+  for (const v of versions) {
+    const n = (seen.get(v.quoteId) ?? 0) + 1;
+    seen.set(v.quoteId, n);
+    if (n === 2) out.get(v.quoteId)!.previousTotal = fmt(v.total); // newest first: the second row is the version before the current one
+  }
+  return out;
+}
+
 export async function loadCustomerView(tx: Tx, deps: AppDeps, id: string): Promise<Schemas["CustomerQuote"]> {
   const quote = await tx.quote.findUniqueOrThrow({ where: { id }, include: { job: true, assignedRep: true } });
   const lines = await customerVisibleLines(tx, quote);
@@ -49,7 +79,8 @@ export async function loadCustomerView(tx: Tx, deps: AppDeps, id: string): Promi
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: MESSAGE_PAGE,
   });
-  return customerQuote({ quote, rep: quote.assignedRep, lines, versions, messages: recent.reverse() }, deps.now());
+  const extras = (await summaryExtras(tx, [quote])).get(id)!;
+  return customerQuote({ quote, extras, lines, versions, messages: recent.reverse() }, deps.now());
 }
 
 export async function resolveJob(
@@ -121,7 +152,7 @@ export async function addLine(
     return;
   }
   const last = await tx.quoteLine.findFirst({ where: { quoteId, set: "CUSTOMER" }, orderBy: { position: "desc" } });
-  const price = parseMoney(pricing.price);
+  const price = assertFits("Price", parseMoney(pricing.price), "variantId");
   await tx.quoteLine.create({
     data: {
       quoteId,
@@ -133,7 +164,7 @@ export async function addLine(
       qty,
       listPrice: price,
       quotedPrice: price,
-      cost: pricing.unitCost == null ? null : parseMoney(pricing.unitCost),
+      cost: pricing.unitCost == null ? null : assertFits("Cost", parseMoney(pricing.unitCost), "variantId"),
       lineNote: opts.lineNote ?? null,
       addedBy: opts.addedBy,
       position: (last?.position ?? 0) + 1,
@@ -149,6 +180,7 @@ export async function createDraft(
     title: string;
     job: Job | null;
     poNumber?: string | null;
+    /** Calendar date YYYY-MM-DD (already validated by the route's zod schema). */
     neededBy?: string | null;
     notesToSales?: string | null;
     createdByStaffId?: string | null;
@@ -170,7 +202,10 @@ export async function createDraft(
       companyName: buyer.companyName,
       companyLocationId: buyer.companyLocationId,
       poNumber: input.poNumber ?? null,
-      neededBy: input.neededBy ? new Date(input.neededBy) : null,
+      neededBy: input.neededBy ? dateOnlyToDate(input.neededBy) : null,
+      currencyCode: buyer.currencyCode,
+      paymentTerms: buyer.paymentTerms ?? null,
+      customerContactPhone: buyer.phone ?? null,
       notesToSales: input.notesToSales ?? null,
       createdByStaffId: input.createdByStaffId ?? null,
     },

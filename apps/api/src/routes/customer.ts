@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { QuoteEvent } from "shared";
 import { z } from "zod";
 import { customerAuth } from "../auth/middleware";
+import { calendarDate, dateOnlyToDate } from "../dates";
 import type { AppDeps, Tx } from "../context";
 import { checkoutQuote } from "../domain/checkout";
 import {
@@ -13,19 +14,22 @@ import {
   getScopedQuote,
   loadCustomerView,
   resolveJob,
+  summaryExtras,
   scopeWhere,
   setActiveQuote,
 } from "../domain/customerQuotes";
 import { customerLines, customerVisibleLines, materializeStaffSet, refreshDerived } from "../domain/lines";
+import { applyRouting } from "../domain/routing";
 import { applyTransition, writeEvent } from "../domain/transitions";
 import { ApiError, notFound } from "../errors";
 import { page, parse } from "../http";
+import { renderQuotePdf } from "../pdf";
 import { asAttachments, customerMessage, customerSummary } from "../serializers/customer";
 import type { BuyerContext } from "../shopify/types";
 import { registerPrefsRoutes } from "./customerPrefs";
 
 // ---------------------------------------------------------------- request schemas (mirror docs/openapi.yaml)
-const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
+const dateStr = calendarDate; // a REAL calendar date: 2026-02-31 and 2026-13-45 are rejected (400), never stored
 const newJob = z.object({ name: z.string().min(1).max(200), poNumber: z.string().max(100).optional(), siteAddress: z.string().max(500).optional() });
 const address = z
   .object({
@@ -80,7 +84,14 @@ const fromCartBody = z.object({
       neededBy: dateStr.optional(),
       notesToSales: z.string().max(5000).optional(),
     }),
-    z.object({ mode: z.literal("existing"), quoteId: z.string().min(1) }),
+    z.object({
+      mode: z.literal("existing"),
+      quoteId: z.string().min(1),
+      // Overwrite the draft's header values only when present.
+      poNumber: z.string().max(100).optional(),
+      neededBy: dateStr.optional(),
+      notesToSales: z.string().max(5000).optional(),
+    }),
   ]),
   submit: z.boolean().default(false),
   emptyCart: z.boolean().default(false),
@@ -94,14 +105,17 @@ const postMessageBody = z.object({
   attachments: z.array(z.object({ url: z.string().url(), name: z.string(), size: z.number().int(), mime: z.string() })).max(10).optional(),
 });
 const uploadUrlBody = z.object({ name: z.string().min(1).max(255), size: z.number().int().min(1).max(26214400), mime: z.string().min(1).max(200) });
+/** `limit` is 1..100; larger values are clamped to 100 (the storefront popover asks for 100). */
+const limitParam = z.coerce.number().int().min(1).default(25).transform((n) => Math.min(n, 100));
 const listQuery = z.object({
   status: z.enum(["DRAFT", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED", "ACCEPTED", "ORDERED", "EXPIRED", "DECLINED", "ARCHIVED"]).optional(),
   jobId: z.string().optional(),
   q: z.string().max(200).optional(),
   cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
+  limit: limitParam,
 });
-const pageQuery = z.object({ cursor: z.string().optional(), limit: z.coerce.number().int().min(1).max(100).default(25) });
+const pageQuery = z.object({ cursor: z.string().optional(), limit: limitParam });
+const pdfQuery = z.object({ version: z.coerce.number().int().min(1).optional() });
 const activeBody = z.object({ quoteId: z.string().nullable() });
 
 const buyerOf = (req: { customer?: { buyer: BuyerContext } }): BuyerContext => req.customer!.buyer;
@@ -147,7 +161,7 @@ async function runCustomerTransition(deps: AppDeps, buyer: BuyerContext, id: str
 }
 
 /** DRAFT -> SUBMITTED including the staff working copy. Shared by /submit and /from-cart. */
-function submitOptions(body: z.infer<typeof submitBody>): RunOptions {
+function submitOptions(deps: AppDeps, body: z.infer<typeof submitBody>): RunOptions {
   return {
     event: "SUBMIT",
     pre: async (tx, quote) => {
@@ -157,10 +171,13 @@ function submitOptions(body: z.infer<typeof submitBody>): RunOptions {
     },
     data: () => ({
       ...(body.notesToSales !== undefined ? { notesToSales: body.notesToSales } : {}),
-      ...(body.neededBy !== undefined ? { neededBy: new Date(body.neededBy) } : {}),
+      ...(body.neededBy !== undefined ? { neededBy: dateOnlyToDate(body.neededBy) } : {}),
       ...(body.poNumber !== undefined ? { poNumber: body.poNumber } : {}),
     }),
-    post: async (tx, quote) => materializeStaffSet(tx, quote.id),
+    post: async (tx, quote) => {
+      await materializeStaffSet(tx, quote.id);
+      await applyRouting(tx, deps, quote.id);
+    },
   };
 }
 
@@ -168,9 +185,9 @@ function requireDraft(status: string) {
   if (status !== "DRAFT") throw new ApiError("NOT_EDITABLE", "Lines can only be changed while the quote is a draft", { status });
 }
 
-export async function customerRoutes(app: FastifyInstance) {
+export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct" | "proxy" }) {
   const deps = app.deps;
-  app.addHook("onRequest", customerAuth(deps)); // before body parsing: anonymous callers get 401, never 400
+  app.addHook("onRequest", customerAuth(deps, opts.mode)); // before body parsing: anonymous callers get 401, never 400
 
   // ---------------------------------------------------------------- list / create
   app.get("/quotes", async (req) => {
@@ -181,7 +198,7 @@ export async function customerRoutes(app: FastifyInstance) {
     if (q.jobId) where.jobId = q.jobId;
     if (q.q) {
       const term = q.q.trim();
-      const num = /^q?-?(\d{3,})$/i.exec(term);
+      const num = /^q?-?(\d{3,9})$/i.exec(term); // at most 9 digits: a bigger number cannot be a quote number (and would overflow INT)
       where.OR = [
         { title: { contains: term, mode: "insensitive" } },
         { poNumber: { contains: term, mode: "insensitive" } },
@@ -192,14 +209,15 @@ export async function customerRoutes(app: FastifyInstance) {
     }
     const rows = await deps.prisma.quote.findMany({
       where,
-      include: { job: true },
+      include: { job: true, assignedRep: true },
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
       take: q.limit + 1,
       ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
     });
     const { items, nextCursor } = page(rows, q.limit);
     const now = deps.now();
-    return { items: items.map((r) => customerSummary(r, now)), nextCursor };
+    const extras = await summaryExtras(deps.prisma, items);
+    return { items: items.map((r) => customerSummary(r, now, extras.get(r.id))), nextCursor };
   });
 
   app.post("/quotes", async (req, reply) => {
@@ -243,16 +261,23 @@ export async function customerRoutes(app: FastifyInstance) {
         id = quote.id;
         await setActiveQuote(tx, deps, buyer, id);
       } else {
-        const quote = await getScopedQuote(tx, deps, buyer, body.target.quoteId, true);
+        const t = body.target;
+        const quote = await getScopedQuote(tx, deps, buyer, t.quoteId, true);
         requireDraft(quote.status);
         id = quote.id;
+        const header: Prisma.QuoteUncheckedUpdateInput = {
+          ...(t.poNumber !== undefined ? { poNumber: t.poNumber } : {}),
+          ...(t.neededBy !== undefined ? { neededBy: dateOnlyToDate(t.neededBy) } : {}),
+          ...(t.notesToSales !== undefined ? { notesToSales: t.notesToSales } : {}),
+        };
+        if (Object.keys(header).length) await tx.quote.update({ where: { id }, data: header });
       }
       for (const l of body.cartLines) await addLine(tx, id, pricing.get(l.variantId)!, l.qty, { addedBy: "CUSTOMER" });
       await writeEvent(tx, id, "FROM_CART", "customer", buyer.customerId, { lineCount: body.cartLines.length }, deps.now());
       await refreshDerived(tx, id);
       return id;
     });
-    const view = body.submit ? await runCustomerTransition(deps, buyer, quoteId, submitOptions({})) : await deps.prisma.$transaction((tx) => loadCustomerView(tx, deps, quoteId));
+    const view = body.submit ? await runCustomerTransition(deps, buyer, quoteId, submitOptions(deps, {})) : await deps.prisma.$transaction((tx) => loadCustomerView(tx, deps, quoteId));
     return reply.status(201).send(view);
   });
 
@@ -279,7 +304,7 @@ export async function customerRoutes(app: FastifyInstance) {
       const data: Prisma.QuoteUncheckedUpdateInput = {};
       if (body.title !== undefined) data.title = body.title;
       if (body.poNumber !== undefined) data.poNumber = body.poNumber;
-      if (body.neededBy !== undefined) data.neededBy = body.neededBy ? new Date(body.neededBy) : null;
+      if (body.neededBy !== undefined) data.neededBy = body.neededBy ? dateOnlyToDate(body.neededBy) : null;
       if (body.shipTo !== undefined) data.shipToAddress = body.shipTo === null ? Prisma.DbNull : (body.shipTo as Prisma.InputJsonValue);
       if (body.notesToSales !== undefined) data.notesToSales = body.notesToSales;
       if (body.watchers !== undefined) data.watchers = body.watchers;
@@ -352,7 +377,7 @@ export async function customerRoutes(app: FastifyInstance) {
   // ---------------------------------------------------------------- transitions
   app.post("/quotes/:id/submit", async (req) => {
     const { id } = req.params as { id: string };
-    return runCustomerTransition(deps, buyerOf(req), id, submitOptions(parse(submitBody, req.body)));
+    return runCustomerTransition(deps, buyerOf(req), id, submitOptions(deps, parse(submitBody, req.body)));
   });
 
   app.post("/quotes/:id/withdraw", async (req) => {
@@ -473,6 +498,25 @@ export async function customerRoutes(app: FastifyInstance) {
     return checkoutQuote(deps, buyerOf(req), id);
   });
 
+  // Customer-safe PDF of a SENT version (built from the customer serializers only: no cost, margin or internal notes).
+  app.get("/quotes/:id/pdf", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const q = parse(pdfQuery, req.query);
+    const { view, companyName } = await deps.prisma.$transaction(async (tx) => {
+      const quote = await getScopedQuote(tx, deps, buyerOf(req), id);
+      return { view: await loadCustomerView(tx, deps, id), companyName: quote.companyName };
+    });
+    const current = Math.max(0, ...view.versions.map((v) => v.versionNo));
+    const wanted = q.version ?? current;
+    const version = view.versions.find((v) => v.versionNo === wanted);
+    if (!version) throw notFound(current === 0 ? "Sent quote" : "Version");
+    const pdf = renderQuotePdf({ quote: view, version, expiresAt: wanted === current ? view.expiresAt ?? null : null, companyName });
+    return reply
+      .type("application/pdf")
+      .header("content-disposition", `inline; filename="${view.displayNumber}-v${version.versionNo}.pdf"`)
+      .send(pdf);
+  });
+
   // ---------------------------------------------------------------- conversation
   app.get("/quotes/:id/messages", async (req) => {
     const { id } = req.params as { id: string };
@@ -485,6 +529,9 @@ export async function customerRoutes(app: FastifyInstance) {
       ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
     });
     const { items, nextCursor } = page(rows, q.limit);
+    // Opening the conversation marks the staff messages on this page as read (drives `unreadCount`).
+    const unread = items.filter((m) => m.authorType !== "CUSTOMER" && !m.readAt).map((m) => m.id);
+    if (unread.length) await deps.prisma.message.updateMany({ where: { id: { in: unread }, readAt: null }, data: { readAt: deps.now() } });
     return { items: items.map(customerMessage), nextCursor };
   });
 

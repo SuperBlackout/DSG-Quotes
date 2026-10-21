@@ -36,7 +36,7 @@ describe("Shopify webhooks", () => {
       await h.c.post(`/c/quotes/${q.id}/checkout`);
       const r = await hook("orders/create", orderFor(q));
       expect(r.status).toBe(200);
-      expect(r.body.result).toBe("ordered");
+      expect(r.headers["x-webhook-result"]).toBe("ordered");
       const row = await h.prisma.quote.findUniqueOrThrow({ where: { id: q.id } });
       expect(row).toMatchObject({ status: "ORDERED", orderId: "gid://shopify/Order/9001" });
       const ev = await eventsOf(h, q.id, "ORDER_PLACED");
@@ -53,15 +53,15 @@ describe("Shopify webhooks", () => {
       const co = (await h.c.post(`/c/quotes/${q.id}/checkout`)).body;
       const num = co.draftOrderId.split("/").pop();
       const r = await hook("orders/create", { id: 77, draft_order_id: Number(num), tags: "" });
-      expect(r.body.result).toBe("ordered");
+      expect(r.headers["x-webhook-result"]).toBe("ordered");
       expect((await h.prisma.quote.findUniqueOrThrow({ where: { id: q.id } })).orderId).toBe("gid://shopify/Order/77");
     });
 
     it("is idempotent for redelivery (same webhook id and a fresh id for the same order)", async () => {
       const q = await accepted(h);
-      expect((await hook("orders/create", orderFor(q), { id: "same" })).body.result).toBe("ordered");
-      expect((await hook("orders/create", orderFor(q), { id: "same" })).body.result).toBe("duplicate");
-      expect((await hook("orders/create", orderFor(q), { id: "other-delivery" })).body.result).toBe("already_ordered");
+      expect((await hook("orders/create", orderFor(q), { id: "same" })).headers["x-webhook-result"]).toBe("ordered");
+      expect((await hook("orders/create", orderFor(q), { id: "same" })).headers["x-webhook-result"]).toBe("duplicate");
+      expect((await hook("orders/create", orderFor(q), { id: "other-delivery" })).headers["x-webhook-result"]).toBe("already_ordered");
       expect(await eventsOf(h, q.id, "ORDER_PLACED")).toHaveLength(1);
     });
 
@@ -69,7 +69,7 @@ describe("Shopify webhooks", () => {
       const q = await sent(h); // QUOTE_READY
       const r = await hook("orders/create", orderFor(q));
       expect(r.status).toBe(200);
-      expect(r.body.result).toBe("ignored_status");
+      expect(r.headers["x-webhook-result"]).toBe("ignored_status");
       expect((await h.prisma.quote.findUniqueOrThrow({ where: { id: q.id } })).status).toBe("QUOTE_READY");
       expect(await eventsOf(h, q.id, "ORDER_PLACED")).toHaveLength(0);
       expect(await eventsOf(h, q.id, "ORDER_IGNORED")).toHaveLength(1);
@@ -78,8 +78,8 @@ describe("Shopify webhooks", () => {
     it("acknowledges orders that match no quote (ordinary web orders)", async () => {
       const r = await hook("orders/create", { id: 5, admin_graphql_api_id: "gid://shopify/Order/5", tags: "vip" });
       expect(r.status).toBe(200);
-      expect(r.body.result).toBe("no_matching_quote");
-      expect((await hook("orders/create", { tags: "quote:Q-99999", id: 6 })).body.result).toBe("no_matching_quote");
+      expect(r.headers["x-webhook-result"]).toBe("no_matching_quote");
+      expect((await hook("orders/create", { tags: "quote:Q-99999", id: 6 })).headers["x-webhook-result"]).toBe("no_matching_quote");
     });
 
     it("rejects a bad signature, a tampered body, a wrong shop; processes nothing", async () => {
@@ -109,7 +109,7 @@ describe("Shopify webhooks", () => {
     it("records the draft order status and links the order once completed (status change stays with orders/create)", async () => {
       const q = await accepted(h);
       const co = (await h.c.post(`/c/quotes/${q.id}/checkout`)).body;
-      expect((await hook("draft_orders/update", { admin_graphql_api_id: co.draftOrderId, status: "invoice_sent" })).body.result).toBe("draft_order_synced");
+      expect((await hook("draft_orders/update", { admin_graphql_api_id: co.draftOrderId, status: "invoice_sent" })).headers["x-webhook-result"]).toBe("draft_order_synced");
       expect((await h.prisma.quote.findUniqueOrThrow({ where: { id: q.id } })).draftOrderStatus).toBe("invoice_sent");
       await hook("draft_orders/update", { admin_graphql_api_id: co.draftOrderId, status: "completed", order_id: 4242 });
       const row = await h.prisma.quote.findUniqueOrThrow({ where: { id: q.id } });
@@ -117,21 +117,21 @@ describe("Shopify webhooks", () => {
     });
 
     it("ignores unknown draft orders", async () => {
-      expect((await hook("draft_orders/update", { admin_graphql_api_id: "gid://shopify/DraftOrder/1", status: "open" })).body.result).toBe("no_matching_quote");
+      expect((await hook("draft_orders/update", { admin_graphql_api_id: "gid://shopify/DraftOrder/1", status: "open" })).headers["x-webhook-result"]).toBe("no_matching_quote");
     });
   });
 
   describe("app/uninstalled and compliance topics", () => {
     it("app/uninstalled deletes the stored sessions", async () => {
       await h.prisma.session.create({ data: { id: "offline_x", shop: SHOP, state: "s", accessToken: "tok" } });
-      expect((await hook("app/uninstalled", {})).body.result).toBe("uninstalled");
+      expect((await hook("app/uninstalled", {})).headers["x-webhook-result"]).toBe("uninstalled");
       expect(await h.prisma.session.count()).toBe(0);
     });
 
     it("customers/data_request is acknowledged and logged (no automatic export)", async () => {
       const r = await hook("customers/data_request", { customer: { id: 1001 } }, { id: "dr-1" });
       expect(r.status).toBe(200);
-      expect(r.body.result).toBe("data_request_logged");
+      expect(r.headers["x-webhook-result"]).toBe("data_request_logged");
       expect(await h.prisma.webhookReceipt.findUnique({ where: { id: "dr-1" } })).toMatchObject({ topic: "customers/data_request" });
     });
 
@@ -145,7 +145,7 @@ describe("Shopify webhooks", () => {
       const other = await draftWith(h, undefined, h.asCustomer(CUSTOMER_B));
 
       const r = await hook("customers/redact", { shop_domain: SHOP, customer: { id: Number(CUSTOMER_A.split("/").pop()) }, orders_to_redact: [] });
-      expect(r.body.result).toBe("customer_redacted");
+      expect(r.headers["x-webhook-result"]).toBe("customer_redacted");
       const row = await h.prisma.quote.findUniqueOrThrow({ where: { id: mine.id } });
       expect(row).toMatchObject({ customerName: "Redacted", customerEmail: null, notesToSales: null });
       expect(row.shipToAddress).toBeNull();
@@ -160,14 +160,14 @@ describe("Shopify webhooks", () => {
       await accepted(h);
       await h.c.put("/c/notification-prefs", { events: { QUOTE_READY: { email: true, sms: false } }, email: "d@example.test" });
       const r = await hook("shop/redact", { shop_domain: SHOP });
-      expect(r.body.result).toBe("shop_redacted");
+      expect(r.headers["x-webhook-result"]).toBe("shop_redacted");
       for (const model of ["quote", "quoteLine", "quoteVersion", "message", "event", "job", "notificationPref", "customerProfile", "staff", "counter"] as const) {
         expect(await (h.prisma[model] as any).count(), model).toBe(0);
       }
     });
 
     it("unknown topics are acknowledged and ignored", async () => {
-      expect((await hook("products/update", { id: 1 })).body.result).toBe("ignored");
+      expect((await hook("products/update", { id: 1 })).headers["x-webhook-result"]).toBe("ignored");
     });
   });
 });

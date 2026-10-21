@@ -12,7 +12,8 @@ import { webhookRoutes } from "./routes/webhooks";
  * webhook handling and test harness; Render runs it as `pnpm -F api start` on dsg-quotes-web).
  *
  * Route prefixes:
- *   /c/*, /proxy/c/*      customer routes (app proxy forwards /apps/quotes/* to <APP_URL>/proxy/*)
+ *   /c/*                  customer routes on the absolute origin (customer-account session token, CORS)
+ *   /proxy/c/*            the same routes through the Shopify app proxy (forwards /apps/quotes/* to <APP_URL>/proxy/*; HMAC signature)
  *   /s/*, /api/s/*        staff routes (embedded admin app; openapi server "/api")
  *   /webhooks/shopify     Shopify webhooks (HMAC verified)
  *   /healthz              liveness + DB check
@@ -41,14 +42,18 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
     });
   }
 
-  // CORS for the customer-account extension, which calls /c/* cross-origin from Shopify's extension sandbox with
-  // a Bearer session token (no cookies, so a wildcard origin does not expose ambient credentials).
-  // Staff routes are same-origin from the embedded app and get no CORS headers.
-  const isCustomerPath = (url: string) => /^\/(proxy\/)?c\//.test(url);
+  // CORS for the customer-account extension (docs/openapi.yaml info.x-cors). It calls /c/* cross-origin from Shopify's
+  // sandbox with a Bearer session token and no cookies, so echoing the request Origin (including the literal "null" that
+  // sandboxed iframes and workers send) does not expose ambient credentials; Access-Control-Allow-Credentials is never sent.
+  // Every /c/* path answers an OPTIONS preflight with 204 and no authentication. /s/*, /hooks/* and the app proxy mount
+  // (/proxy/c/*, same-origin storefront) get no CORS headers.
+  const isDirectCustomerPath = (url: string) => /^\/c(\/|\?|$)/.test(url);
   app.addHook("onRequest", async (req, reply) => {
-    if (!isCustomerPath(req.raw.url ?? "")) return;
-    reply.header("access-control-allow-origin", "*");
-    reply.header("access-control-allow-headers", "authorization, content-type, x-company-location-id");
+    if (!isDirectCustomerPath(req.raw.url ?? "")) return;
+    const origin = req.headers.origin;
+    if (typeof origin === "string" && origin) reply.header("access-control-allow-origin", origin);
+    reply.header("vary", "Origin");
+    reply.header("access-control-allow-headers", "Authorization, Content-Type");
     reply.header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     reply.header("access-control-max-age", "600");
     if (req.method === "OPTIONS") return reply.status(204).send();
@@ -84,8 +89,8 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
     }
   });
 
-  await app.register(customerRoutes, { prefix: "/c" });
-  await app.register(customerRoutes, { prefix: "/proxy/c" });
+  await app.register(customerRoutes, { prefix: "/c", mode: "direct" });
+  await app.register(customerRoutes, { prefix: "/proxy/c", mode: "proxy" });
   await app.register(staffRoutes, { prefix: "/s" });
   await app.register(staffRoutes, { prefix: "/api/s" });
   await app.register(webhookRoutes, { prefix: "/webhooks" });
