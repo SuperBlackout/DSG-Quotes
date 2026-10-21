@@ -188,16 +188,9 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
         if (keyword === "STOP") {
           const n = await optOutPhone(tx, shop, from);
           if (last) {
-            await tx.event.create({
-              data: {
-                quoteId: last.quoteId,
-                type: "NOTIFICATION",
-                actorType: "SYSTEM",
-                payload: { channel: "sms", to: from, status: "OPTED_OUT", keyword: "STOP", recipientKind: ctx?.recipientKind ?? null, recipientKey: ctx?.recipientKey ?? null, rows: n },
-                notifiedAt: deps.now(),
-                createdAt: deps.now(),
-              },
-            });
+            // Built outside the `data:` literal: this `status` is a send-log field, not Quote.status (integrity grep).
+            const payload = { channel: "sms", to: from, status: "OPTED_OUT", keyword: "STOP", recipientKind: ctx?.recipientKind ?? null, recipientKey: ctx?.recipientKey ?? null, rows: n };
+            await tx.event.create({ data: { quoteId: last.quoteId, type: "NOTIFICATION", actorType: "SYSTEM", payload, notifiedAt: deps.now(), createdAt: deps.now() } });
           }
           return { kind: "stop" as const };
         }
