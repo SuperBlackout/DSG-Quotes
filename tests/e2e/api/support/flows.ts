@@ -66,7 +66,18 @@ export async function reprice(
   return ok(await rep.put(`/s/quotes/${quoteId}/draft-revision`, { lines, ...rest }), 200, "save draft revision");
 }
 
-/** Submitted -> claimed -> priced -> sent. Returns the customer's view of the quote. */
+/**
+ * Contract 0.2.0: a line whose inventory cost is unknown cannot be sent until a manager/admin approves it.
+ * Approves exactly those lines (never thin-margin ones: tests that exercise the floor approve those explicitly).
+ */
+export async function approveUnknownCost(w: World, quoteId: string): Promise<string[]> {
+  const cur = ok(await w.rep1.get(`/s/quotes/${quoteId}`), 200, "load staff quote");
+  const ids: string[] = cur.workingLines.filter((l: any) => l.costUnknown && !l.floorApproved).map((l: any) => l.id);
+  if (ids.length) ok(await w.manager.post(`/s/quotes/${quoteId}/approve-floor`, { lineIds: ids }), 200, "approve unknown-cost lines");
+  return ids;
+}
+
+/** Submitted -> claimed -> priced -> (unknown-cost lines approved by the manager) -> sent. Returns the customer's view of the quote. */
 export async function sentQuote(
   w: World,
   o: { lines?: Line[]; prices?: Record<string, string>; customer?: Actor; rep?: Actor; freight?: string } = {},
@@ -75,6 +86,7 @@ export async function sentQuote(
   const rep = o.rep ?? w.rep1;
   const q = await submitted(who, o.lines);
   await claimAndPrice(rep, q.id, o.prices ?? {}, o.freight ? { freight: o.freight } : {});
+  await approveUnknownCost(w, q.id);
   ok(await rep.post(`/s/quotes/${q.id}/send`), 200, "send");
   return ok(await who.get(`/c/quotes/${q.id}`), 200, "customer view");
 }

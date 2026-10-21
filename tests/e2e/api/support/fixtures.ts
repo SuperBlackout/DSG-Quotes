@@ -21,9 +21,10 @@ export const BEA = { id: "gid://shopify/Customer/2001", name: "Bea Buyer" }; // 
 export const NOBODY = "gid://shopify/Customer/9999"; // a customer who is not a company contact
 
 // ---------------------------------------------------------------- staff (Shopify staff ids; rows auto-provisioned)
-export const REP1 = { shopifyId: "rep-1", name: "Rita Rep" };
-export const REP2 = { shopifyId: "rep-2", name: "Ross Rep" };
-export const MANAGER = { shopifyId: "mgr-1", name: "Maya Manager" };
+export const REP1 = { shopifyId: "rep-1", name: "Rita Rep", email: "rita@dsg-e2e.example.test" };
+export const REP2 = { shopifyId: "rep-2", name: "Ross Rep", email: "ross@dsg-e2e.example.test" };
+export const MANAGER = { shopifyId: "mgr-1", name: "Maya Manager", email: "maya@dsg-e2e.example.test" };
+export const ADMIN = { shopifyId: "adm-1", name: "Adam Admin", email: "adam@dsg-e2e.example.test" };
 export const DEFAULT_FLOOR_PCT = 15;
 
 // ---------------------------------------------------------------- catalog

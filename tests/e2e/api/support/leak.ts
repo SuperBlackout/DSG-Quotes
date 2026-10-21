@@ -12,7 +12,10 @@ export const FORBIDDEN_KEYS = new Set([
   "margin", "marginPct", "marginTotal", "marginPercent", "margin_pct",
   "internalNote", "internal_note", "workingInternalNote", "workingRepNote", "workingFreight", "workingLines", "workingExpiresAt",
   "internal",
-  "belowFloor", "floorApproved", "floorApprovedById", "priceFloorPct", "floorPct",
+  "belowFloor", "floorApproved", "floorApprovedById", "priceFloorPct", "floorPct", "effectivePriceFloorPct",
+  "costUnknown", "costUnknownLineIds", "requester",
+  // staff-only fields added by contract 0.2.0
+  "nextVersionNo", "canApproveFloor", "canEditSettings", "teamIds", "memberIds",
   "latestChangeRequest", "createdByStaffId", "assignedRepId", "teamId", "sentById", "authorId",
   "customerEmail", "draftOrderInvoiceUrl",
 ]);
@@ -36,6 +39,8 @@ export function findLeaks(text: string, body: unknown): string[] {
     if (FORBIDDEN_KEYS.has(k)) leaks.push(`forbidden key "${k}" at ${path}`);
   });
   for (const s of SECRETS) if (text.includes(s)) leaks.push(`internal text leaked: ${s}`);
+  // The floor-approval workflow is internal: neither its event name nor its error code may reach a dealer.
+  if (/FLOOR_APPROVAL/.test(text)) leaks.push("floor approval workflow name appears in the response");
   for (const c of COSTS) if (numberToken(c).test(text)) leaks.push(`unit cost ${c} appears in the response`);
   for (const m of MARGIN_FIGURES) if (numberToken(m).test(text)) leaks.push(`margin figure ${m} appears in the response`);
   return leaks;

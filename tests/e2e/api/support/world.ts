@@ -10,7 +10,7 @@ import type { AppDeps } from "../../../../apps/api/src/context";
 import { createPrisma } from "../../../../apps/api/src/db";
 import { applyTransition, lockQuote } from "../../../../apps/api/src/domain/transitions";
 import { FakeShopify } from "../../../../apps/api/src/shopify/fake";
-import { contractPath, findOperation, validateRequestBody, validateResponse } from "./contract";
+import { checkMediaType, contractPath, findOperation, validateRequestBody, validateResponse } from "./contract";
 import { E2E_DB_URL, HITS_FILE, assertDisposableDb } from "./env";
 import * as F from "./fixtures";
 import { findLeaks } from "./leak";
@@ -64,7 +64,10 @@ export interface World {
   rep1: Actor;
   rep2: Actor;
   manager: Actor;
-  staff: { rep1: StaffRow; rep2: StaffRow; manager: StaffRow };
+  admin: Actor;
+  /** Any other staff member by Shopify staff id (auto-provisioned by the API on first call: the very first one in an empty shop becomes admin). */
+  staffAs(shopifyId: string): Actor;
+  staff: { rep1: StaffRow; rep2: StaffRow; manager: StaffRow; admin: StaffRow };
   /** No credentials at all. */
   anon: Actor;
   /** Hand-rolled request, no auth, no checks (webhook / negative auth tests). */
@@ -166,6 +169,8 @@ export function useWorld(opts: UseWorldOptions = {}): World {
       if (!op) throw new Error(`CONTRACT: ${where}: route ${route} is served by the API but is not in docs/openapi.yaml`);
       const errs = validateResponse(o.method, route, r.statusCode, body);
       if (errs.length) throw new Error(`CONTRACT: ${where} response violates docs/openapi.yaml:\n  ${errs.slice(0, 10).join("\n  ")}\n  body: ${r.body.slice(0, 600)}`);
+      const mediaErr = checkMediaType(o.method, route, r.statusCode, String(r.headers["content-type"] ?? ""));
+      if (mediaErr) throw new Error(`CONTRACT: ${where}: ${mediaErr}`);
       if (r.statusCode < 400 && !meta.loose) {
         const reqErrs = validateRequestBody(o.method, route, meta.sentBody);
         if (reqErrs.length) throw new Error(`CONTRACT: ${where}: the API accepted a request body that violates the contract (test bug or API too lenient):\n  ${reqErrs.join("\n  ")}`);
@@ -225,6 +230,8 @@ export function useWorld(opts: UseWorldOptions = {}): World {
     w.rep1 = actor("rep1", bearer("staff", F.REP1.shopifyId));
     w.rep2 = actor("rep2", bearer("staff", F.REP2.shopifyId));
     w.manager = actor("manager", bearer("staff", F.MANAGER.shopifyId));
+    w.admin = actor("admin", bearer("staff", F.ADMIN.shopifyId));
+    w.staffAs = (shopifyId) => actor(`staff:${shopifyId}`, bearer("staff", shopifyId));
     // App proxy flavour: Shopify forwards /apps/quotes/c/... as /proxy/c/... with a signed query string.
     w.danaProxy = actor(
       "dana-proxy",
@@ -288,21 +295,23 @@ export function useWorld(opts: UseWorldOptions = {}): World {
       }
       await prisma.$executeRawUnsafe(`TRUNCATE ${tables.map((t) => `"${t}"`).join(", ")} RESTART IDENTITY CASCADE`);
       seedShopify(shopify);
-      // Provision staff: the API creates a Staff row on a staff member's first call; then we set role and floor.
-      const make = async (a: Actor, who: { shopifyId: string; name: string }, patch: { isManager?: boolean }) => {
-        const r = await a.get("/s/reports/summary");
+      // Provision staff: the API creates a Staff row on a staff member's first call. The FIRST staff member of a shop becomes
+      // admin automatically, so every fixture sets its role explicitly instead of relying on call order.
+      // priceFloorPct stays NULL (= the shop default, 15) unless a test sets a personal floor.
+      const make = async (a: Actor, who: { shopifyId: string; name: string; email: string }, role: "rep" | "manager" | "admin") => {
+        const r = await a.get("/s/me");
         if (r.status !== 200) throw new Error(`could not provision ${who.shopifyId}: ${r.text}`);
         const row = await prisma.staff.update({
           where: { shop_shopifyStaffId: { shop: F.SHOP, shopifyStaffId: who.shopifyId } },
-          data: { name: who.name, isManager: !!patch.isManager, priceFloorPct: F.DEFAULT_FLOOR_PCT },
+          data: { name: who.name, email: who.email, role, active: true, priceFloorPct: null },
         });
         return { id: row.id, shopifyId: who.shopifyId, name: who.name };
       };
-      w.staff = {
-        rep1: await make(w.rep1, F.REP1, {}),
-        rep2: await make(w.rep2, F.REP2, {}),
-        manager: await make(w.manager, F.MANAGER, { isManager: true }),
-      };
+      const admin = await make(w.admin, F.ADMIN, "admin");
+      const manager = await make(w.manager, F.MANAGER, "manager");
+      const rep1 = await make(w.rep1, F.REP1, "rep");
+      const rep2 = await make(w.rep2, F.REP2, "rep");
+      w.staff = { rep1, rep2, manager, admin };
     };
 
     await w.reset();

@@ -87,8 +87,18 @@ describe("operations not covered by the lifecycle files", () => {
 
   it("notification prefs (Screen 5): defaults, save, SMS opt-in needs a valid phone and the consent text, consent is kept", async () => {
     const def = ok(await w.dana.get("/c/notification-prefs"), 200, "defaults");
-    expect(def.events.QUOTE_READY).toEqual({ email: true, sms: false });
-    expect(def).toMatchObject({ email: "dana@acme.example.test", smsOptIn: false, smsOptInAt: null });
+    // Exactly the seven contract keys (CHANGES_REQUESTED is staff-only), email on and SMS off by default.
+    expect(Object.keys(def.events).sort()).toEqual(["ACCEPTED", "EXPIRING", "NEW_MESSAGE", "ORDERED", "QUOTE_READY", "QUOTE_RECEIVED", "WEEKLY_SUMMARY"]);
+    for (const k of Object.keys(def.events)) expect(def.events[k], k).toEqual({ email: true, sms: false });
+    expect(def).toMatchObject({ email: "dana@acme.example.test", smsOptIn: false, smsOptInAt: null, watchers: [] });
+
+    // PUT replaces all seven: a missing key or an unknown key (including the retired CHANGES_REQUESTED) is a 400.
+    const { QUOTE_RECEIVED: _drop, ...sixKeys } = def.events;
+    expect((await w.dana.put("/c/notification-prefs", { events: sixKeys, email: def.email }, { loose: true })).status).toBe(400);
+    const retired = await w.dana.put("/c/notification-prefs", { events: { ...def.events, CHANGES_REQUESTED: { email: true, sms: false } }, email: def.email }, { loose: true });
+    expect(retired.status).toBe(400);
+    expect(retired.body.code).toBe("BAD_REQUEST");
+    expect((await w.dana.put("/c/notification-prefs", { events: { ...def.events, ORDERED: { email: true } }, email: def.email }, { loose: true })).status).toBe(400);
 
     const events = { ...def.events, QUOTE_READY: { email: true, sms: true }, NEW_MESSAGE: { email: false, sms: false } };
     const noOptIn = await w.dana.put("/c/notification-prefs", { ...def, events }, { loose: true });
@@ -99,13 +109,24 @@ describe("operations not covered by the lifecycle files", () => {
     const noConsent = await w.dana.put("/c/notification-prefs", { ...def, events, smsOptIn: true, phone: "+13125550123" }, { loose: true });
     expect(noConsent.status).toBe(422);
 
+    // Watchers are objects now. Scope is "all" or a job of the caller's own company; another company's job is a 422.
+    const job = (await draftWith(w.dana)).job;
+    const theirJob = (await draftWith(w.bea)).job;
+    const watcher = { email: "boss@acme.example.test", name: "Pat Boss", role: "Project manager", scope: job.id, channels: { email: true, sms: false } };
+    const foreign = await w.dana.put("/c/notification-prefs", { events: def.events, email: def.email, watchers: [{ ...watcher, scope: theirJob.id }] }, { loose: true });
+    expect(foreign.status).toBe(422);
+    expect(foreign.body.details).toMatchObject({ field: "watchers" });
+    expect((await w.dana.put("/c/notification-prefs", { events: def.events, email: def.email, watchers: [{ ...watcher, scope: "no-such-job" }] }, { loose: true })).status).toBe(422);
+    expect((await w.dana.put("/c/notification-prefs", { events: def.events, email: def.email, watchers: ["boss@acme.example.test"] }, { loose: true })).status).toBe(400); // plain emails are the quote-level shape
+    expect((await w.dana.put("/c/notification-prefs", { events: def.events, email: def.email, watchers: [{ ...watcher, channels: { email: true } }] }, { loose: true })).status).toBe(400);
+
     const CONSENT = "I agree to receive text messages from DSG about my quotes. Msg & data rates may apply. Reply STOP to opt out.";
     const saved = ok(
-      await w.dana.put("/c/notification-prefs", { events, email: "dana@acme.example.test", phone: "+13125550123", smsOptIn: true, smsConsentText: CONSENT, quietStart: "19:00", quietEnd: "07:00", timezone: "America/Chicago", watchers: ["boss@acme.example.test"] }),
+      await w.dana.put("/c/notification-prefs", { events, email: "dana@acme.example.test", phone: "+13125550123", smsOptIn: true, smsConsentText: CONSENT, quietStart: "19:00", quietEnd: "07:00", timezone: "America/Chicago", watchers: [watcher] }),
       200,
       "save",
     );
-    expect(saved).toMatchObject({ smsOptIn: true, smsConsentText: CONSENT, quietStart: "19:00", quietEnd: "07:00", timezone: "America/Chicago", watchers: ["boss@acme.example.test"], phone: "+13125550123" });
+    expect(saved).toMatchObject({ smsOptIn: true, smsConsentText: CONSENT, quietStart: "19:00", quietEnd: "07:00", timezone: "America/Chicago", watchers: [watcher], phone: "+13125550123" });
     expect(saved.smsOptInAt).toBe(w.clock.now.toISOString());
     expect(saved.events.QUOTE_READY.sms).toBe(true);
 
@@ -115,7 +136,7 @@ describe("operations not covered by the lifecycle files", () => {
     expect(again.smsOptInAt).toBe(saved.smsOptInAt);
     expect(again.smsConsentText).toBe(CONSENT);
     // Opting out clears SMS everywhere.
-    const out = ok(await w.dana.put("/c/notification-prefs", { events: { QUOTE_READY: { email: true, sms: false } }, email: "dana@acme.example.test", smsOptIn: false }), 200, "opt out");
+    const out = ok(await w.dana.put("/c/notification-prefs", { events: { ...events, QUOTE_READY: { email: true, sms: false } }, email: "dana@acme.example.test", smsOptIn: false }), 200, "opt out");
     expect(out).toMatchObject({ smsOptIn: false, smsOptInAt: null });
     // Preferences are per person: Drew is untouched.
     expect(ok(await w.drew.get("/c/notification-prefs"), 200, "drew").events.QUOTE_READY).toEqual({ email: true, sms: false });
@@ -225,12 +246,73 @@ describe("operations not covered by the lifecycle files", () => {
   it("GET /healthz is alive and CORS preflight works for the customer-account extension", async () => {
     const h = await w.raw({ method: "GET", url: "/healthz" });
     expect(h.body).toEqual({ ok: true });
-    const pre = await w.raw({ method: "OPTIONS", url: "/c/quotes", headers: { origin: "https://extensions.shopifycdn.com", "access-control-request-method": "GET" } });
-    expect(pre.status).toBe(204);
-    expect(pre.headers["access-control-allow-origin"]).toBe("*");
-    expect(String(pre.headers["access-control-allow-headers"])).toMatch(/authorization/i);
     expect(ok(await w.dana.get("/c/quotes"), 200, "list").items).toEqual([]);
     expect((await w.dana.get("/c/quotes")).headers["cache-control"]).toBe("no-store");
+  });
+
+  describe("CORS (info.x-cors): /c/* only", () => {
+    const cors = (spec as any).info["x-cors"];
+    const preflight = (url: string, origin?: string, extra: Record<string, string> = {}) =>
+      w.raw({ method: "OPTIONS", url, headers: { ...(origin ? { origin } : {}), "access-control-request-method": "GET", "access-control-request-headers": "authorization", ...extra } });
+
+    it("the contract says what this suite checks", () => {
+      expect(cors).toMatchObject({ appliesTo: "/c/*", maxAgeSeconds: 600 });
+      expect([...cors.allowedHeaders].sort()).toEqual(["Authorization", "Content-Type"]);
+      expect([...cors.allowedMethods].sort()).toEqual(["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]);
+    });
+
+    it("preflight from Origin: null and from a real origin: unauthenticated 204, origin echoed, headers per x-cors, no credentials header", async () => {
+      for (const origin of ["null", "https://extensions.shopifycdn.com"]) {
+        const pre = await preflight("/c/quotes", origin);
+        expect(pre.status, origin).toBe(204);
+        expect(pre.headers["access-control-allow-origin"], origin).toBe(origin);
+        expect(pre.headers["access-control-max-age"], origin).toBe(String(cors.maxAgeSeconds));
+        const allowHeaders = String(pre.headers["access-control-allow-headers"]).split(/\s*,\s*/).map((h) => h.toLowerCase());
+        for (const h of cors.allowedHeaders) expect(allowHeaders, origin).toContain(h.toLowerCase());
+        const allowMethods = String(pre.headers["access-control-allow-methods"]).split(/\s*,\s*/);
+        for (const m of cors.allowedMethods) expect(allowMethods, origin).toContain(m);
+        expect(pre.headers["access-control-allow-credentials"], origin).toBeUndefined();
+      }
+    });
+
+    it("every /c/* path in the contract answers an unauthenticated OPTIONS with 204 (parameters filled in)", async () => {
+      const paths = [...new Set(operations().filter((o) => o.path.startsWith("/c/")).map((o) => o.path))];
+      expect(paths.length).toBeGreaterThan(10);
+      for (const p of paths) {
+        const r = await preflight(p.replace(/\{\w+\}/g, "x"), "null");
+        expect(r.status, p).toBe(204);
+        expect(r.headers["access-control-allow-origin"], p).toBe("null");
+      }
+    });
+
+    it("actual responses (success and error) on /c/* carry the echoed origin; the Authorization header works cross-origin", async () => {
+      const ok200 = await w.dana.get("/c/quotes", { headers: { origin: "null" } });
+      expect(ok200.status).toBe(200);
+      expect(ok200.headers["access-control-allow-origin"]).toBe("null");
+      expect(ok200.headers["access-control-allow-credentials"]).toBeUndefined();
+      const e404 = await w.dana.get("/c/quotes/nope", { headers: { origin: "https://extensions.shopifycdn.com" } });
+      expect(e404.status).toBe(404);
+      expect(e404.headers["access-control-allow-origin"]).toBe("https://extensions.shopifycdn.com");
+      const e401 = await w.raw({ method: "GET", url: "/c/quotes", headers: { origin: "null" } });
+      expect(e401.status).toBe(401);
+      expect(e401.headers["access-control-allow-origin"]).toBe("null");
+    });
+
+    it("no CORS headers on /s/*, /webhooks/* or /healthz, and none on the app proxy mount", async () => {
+      const asKeys = (h: Record<string, any>) => Object.keys(h).filter((k) => k.startsWith("access-control-"));
+      const s = await w.rep1.get("/s/me", { headers: { origin: "null" } });
+      expect(s.status).toBe(200);
+      expect(asKeys(s.headers)).toEqual([]);
+      const sPre = await preflight("/s/quotes", "null");
+      expect(asKeys(sPre.headers)).toEqual([]);
+      expect(sPre.status).not.toBe(204);
+      const hook = await preflight("/webhooks/shopify", "null");
+      expect(asKeys(hook.headers)).toEqual([]);
+      expect(asKeys((await w.raw({ method: "GET", url: "/healthz", headers: { origin: "null" } })).headers)).toEqual([]);
+      const proxy = await w.danaProxy.get("/c/quotes", { headers: { origin: "null" } });
+      expect(proxy.status).toBe(200);
+      expect(asKeys(proxy.headers)).toEqual([]);
+    });
   });
 
   it("a rep claim on an already claimed or accepted quote just reassigns it (no status change)", async () => {
