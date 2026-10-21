@@ -4,7 +4,7 @@
  */
 import { canTransition, type QuoteStatus } from "shared";
 import type { DraftRevisionRequest, InboxTab, StaffQuote, StaffQuoteLine, StaffSummary } from "./api-client";
-import { parseMoney, toMoneyString, type PricedLine } from "./pricing";
+import { floorViolations, parseMoney, toMoneyString, type PricedLine } from "./pricing";
 
 /* ----------------------------------------------------------------------------------------- lines */
 
@@ -41,11 +41,25 @@ export function toEditorLine(l: StaffQuoteLine): EditorLine {
     qty: l.qty,
     listPriceCents: parseMoney(l.listPrice) ?? 0,
     costCents: l.cost === null || l.cost === undefined ? null : parseMoney(l.cost),
+    // A saved line with no cost is "unknown" even if an older server omits the flag.
+    costUnknown: l.costUnknown ?? (l.cost === null || l.cost === undefined),
     quotedPriceCents: parseMoney(l.quotedPrice) ?? 0,
     lineNote: l.lineNote ?? "",
     floorApproved: l.floorApproved ?? false,
     addedBy: l.addedBy,
   };
+}
+
+/** "saved": cost snapshotted (or known unknown); "pending": added in this session, waiting for the save that snapshots it. */
+export type SnapshotState = "pending" | "saved";
+
+export function snapshotState(l: Pick<EditorLine, "id">): SnapshotState {
+  return l.id ? "saved" : "pending";
+}
+
+/** True when the editor holds lines the server has not seen, so cost and list price are not snapshotted yet. */
+export function hasPendingSnapshot(s: Pick<EditorState, "lines">): boolean {
+  return s.lines.some((l) => snapshotState(l) === "pending");
 }
 
 export function isoToDateInput(iso: string | null | undefined): string {
@@ -61,7 +75,8 @@ export function stateFromQuote(q: StaffQuote): EditorState {
   return {
     lines: [...q.workingLines].sort((a, b) => a.position - b.position).map(toEditorLine),
     freightCents: parseMoney(q.workingFreight) ?? 0,
-    expiresOn: isoToDateInput(q.expiresAt),
+    // The editable expiry is the working revision's; `expiresAt` is what the last sent version carries.
+    expiresOn: isoToDateInput(q.workingExpiresAt),
     repNote: q.workingRepNote ?? "",
     internalNote: q.workingInternalNote ?? "",
   };
@@ -86,6 +101,11 @@ export function toDraftRequest(s: EditorState): DraftRevisionRequest {
 /** True when the editor differs from the last saved/loaded state. Compares the request payloads. */
 export function isDirty(current: EditorState, saved: EditorState): boolean {
   return JSON.stringify(toDraftRequest(current)) !== JSON.stringify(toDraftRequest(saved));
+}
+
+/** Server ids of saved lines that need a manager (under floor or unknown cost, not yet approved). */
+export function flaggedLineIds(lines: readonly EditorLine[], floorPct: number): string[] {
+  return floorViolations(lines, floorPct).flatMap((v) => (v.line.id ? [v.line.id] : []));
 }
 
 /** Validation errors blocking Save / Send. Empty array = fine. */
@@ -127,10 +147,23 @@ export function diffAgainstVersion(
 
 /* ---------------------------------------------------------------------------- workflow / versions */
 
-/** The version number "Send vN" will create. */
-export function nextVersionNo(q: Pick<StaffQuote, "currentVersion" | "versions">): number {
+/**
+ * The version number "Send vN" will create. The server's `nextVersionNo` is authoritative (never
+ * `currentVersion + 1`: after a reopen and resend the two differ). The max-based fallback matches the server
+ * rule and only runs against a server that omits the field.
+ */
+export function nextVersionNo(q: Pick<StaffQuote, "currentVersion" | "versions"> & { nextVersionNo?: number }): number {
+  if (typeof q.nextVersionNo === "number" && q.nextVersionNo >= 1) return q.nextVersionNo;
   const fromVersions = q.versions.reduce((m, v) => Math.max(m, v.versionNo), 0);
   return Math.max(q.currentVersion ?? 0, fromVersions) + 1;
+}
+
+/** Buyer contact for the editor header: the named contact if any, else the customer. */
+export function contactSummary(q: Pick<StaffQuote, "customerName" | "customerContactName" | "customerContactPhone">): {
+  name: string;
+  phone: string | null;
+} {
+  return { name: q.customerContactName?.trim() || q.customerName, phone: q.customerContactPhone?.trim() || null };
 }
 
 export interface QuoteActions {
@@ -223,21 +256,16 @@ export function isInboxTab(v: string | null | undefined): v is InboxTab {
   return INBOX_TABS.some((t) => t.id === v);
 }
 
-/** Tab badge counts that the summary endpoint can provide. Others are undefined (no badge). */
-export function tabCount(tab: InboxTab, s: StaffSummary | null | undefined): number | undefined {
-  if (!s) return undefined;
-  switch (tab) {
-    case "needs_response":
-      return s.needsResponse;
-    case "unassigned":
-      return s.unassigned;
-    case "accepted":
-      return s.acceptedThisWeek;
-    case "expiring":
-      return s.expiringSoon;
-    default:
-      return undefined;
-  }
+/** Tab badge from `StaffSummary.tabCounts`, which uses the same filters as the list tabs. */
+export function tabCount(tab: InboxTab, s: Pick<StaffSummary, "tabCounts"> | null | undefined): number | undefined {
+  const n = s?.tabCounts?.[tab];
+  return typeof n === "number" ? n : undefined;
+}
+
+/** "3 items" (lines, not units). */
+export function itemCountLabel(n: number | null | undefined): string {
+  const c = n ?? 0;
+  return `${c} item${c === 1 ? "" : "s"}`;
 }
 
 /** Whole-dollar display for tiles: 6421000 cents -> "$64,210". Input is an API Money string. */
