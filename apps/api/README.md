@@ -25,14 +25,15 @@ Mounts: `/c/*` and `/proxy/c/*` (app proxy forwards `/apps/quotes/*` to `<APP_UR
 
 | Caller | Credential | Result |
 | --- | --- | --- |
-| Storefront blocks (`/c`) | App proxy query signature (HMAC-SHA256 hex, 5 min window, `shop` must match) | customer = `logged_in_customer_id` |
-| My Quotes extension (`/c`) | `Authorization: Bearer` customer-account session token (HS256, `aud`=client id, `dest`=shop, `sub`=customer GID) | customer = `sub` |
-| Admin app (`/s`) | `Authorization: Bearer` admin session token (same verification, `sub` = staff user id) | Staff row, auto-provisioned |
+| Storefront blocks (`/proxy/c`) | App proxy query signature (HMAC-SHA256 hex, 5 min window, `shop` must match) | customer = `logged_in_customer_id` |
+| My Quotes extension (`/c`, cross-origin) | `Authorization: Bearer` customer-account session token (HS256, `aud`=client id, `dest`=shop, `sub`=customer GID) | customer = `sub` |
+| Admin app (`/s`) | `Authorization: Bearer` admin session token (same verification, `sub` = staff user id) | Staff row, auto-provisioned: the first staff member of a shop becomes `admin`, later ones `rep`; inactive staff get 403 |
 | Shopify webhooks | `X-Shopify-Hmac-Sha256` over the raw body, dedupe by `X-Shopify-Webhook-Id` | |
 
 The customer is resolved to a company buyer through the `ShopifyGateway`; every `/c` query is scoped to the buyer's
 `companyLocationId` (cross-company or cross-location = 404). `X-Company-Location-Id` may select among the contact's own
-locations. `/c` sends permissive CORS headers (Bearer token, no cookies) for the customer-account sandbox.
+locations. The two customer mounts are strictly separate: `/c/*` accepts only the session token, `/proxy/c/*` only the proxy signature. CORS is
+sent on direct `/c/*` only (Origin echoed, including `null`; unauthenticated 204 preflight; no credentials header).
 
 ## Layout
 
@@ -41,15 +42,23 @@ locations. `/c` sends permissive CORS headers (Bearer token, no cookies) for the
 - `src/domain/transitions.ts` the ONLY writer of `Quote.status` (`transition()` + one `events` row, in the caller's transaction;
   `test/integrity.test.ts` greps for violations). `checkout.ts` accept -> buy. `staffQuotes.ts` send/floor/draft revisions.
 - `src/serializers/` whitelist serializers. `customer.ts` never emits cost, margin, floor flags, internal notes/messages.
-- `src/routes/` `customer.ts`, `customerPrefs.ts`, `staff.ts`, `webhooks.ts`.
+- `src/routes/` `customer.ts`, `customerPrefs.ts`, `staff.ts`, `staffAdmin.ts` (me, staff, teams, settings, saved replies, customer search), `webhooks.ts`.
+- `src/dates.ts` calendar-date and offset-datetime guards; `src/domain/money.ts` overflow guards (`assertFits`: over-wide numbers are 422, never 500);
+  `src/domain/routing.ts` submit-time rep/team routing; `src/pdf.ts` dependency-free quote PDF (fed only by customer-safe data).
 
 ## Behaviour notes
 
 - Lines live in three sets (`QuoteLine.set`): `CUSTOMER` (their draft / submitted request), `STAFF` (rep working revision,
   materialised on submit), `VERSION` (frozen). Customers only ever see CUSTOMER lines or the latest sent VERSION.
 - Prices are snapshotted on add (`listPrice = quotedPrice =` buyer's contextual price, `cost` = inventory unit cost).
-- Floor: a line is below the floor when `(quoted - cost)/quoted < priceFloorPct` of the quote's assigned rep (sender if unassigned;
-  default 15). Unknown cost is not judged. Manager `approve-floor` approves one price/qty; editing the line resets the approval.
+- Floor: a line is below the floor when `(quoted - cost)/quoted < floor`: the rep's own `priceFloorPct`, else the shop default (`ShopSetting`, 15).
+  Unknown cost (`costUnknown`) always needs approval. Manager/admin `approve-floor` approves one price/qty; editing the line resets the approval.
+  `request-floor-approval` writes a `FLOOR_APPROVAL_REQUESTED` event for the worker to notify managers.
+- Roles: `rep | manager | admin`. Managers and admins approve floors and write teams/settings/shared replies; only an admin grants or removes admin;
+  the shop always keeps one active manager or admin.
+- Routing: on submit, `autoAssignByCompany` rules assign rep/team; otherwise the default team applies.
+- Notification tables (`NotificationLog`, `SmsOptOut`) are written by the worker; preference events are the 7 keys in `routes/customerPrefs.ts`.
+- The Shopify webhook route answers a bare 200 (headers carry `x-webhook-result`).
 - Send: totals `subtotal = sum(qty*quoted)`, `discountTotal = sum(qty*max(list-quoted,0))` (informational), `total = subtotal + freight`;
   expiry = rep-chosen date or now + 14 days (`QUOTE_DEFAULT_EXPIRY_DAYS`).
 - Checkout: row-locked, idempotent, draft order built from the frozen version at `quotedPrice`; net-terms locations are completed with payment pending.
@@ -78,6 +87,9 @@ pnpm -F api test
 every response in every test is validated against the contract (`test/openapi.ts`).
 
 ## Migrations
+
+`20260301000000_contract_0_2_0` converts `Staff.isManager` to `role` (manager where it was true), drops `Staff.teamId` (see `TeamMember`),
+makes `Staff.priceFloorPct` nullable (15 becomes NULL = shop default) and removes stored `CHANGES_REQUESTED` customer preferences.
 
 `prisma/migrations/*/migration.sql` is hand-maintained SQL in Prisma's format (the schema-engine binary could not be downloaded
 in the build sandbox). `test/schema-sync.test.ts` fails on any drift from `schema.prisma`. When you can run Prisma normally,
