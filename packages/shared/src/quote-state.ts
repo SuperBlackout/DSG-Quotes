@@ -69,15 +69,27 @@ const RULES: Record<QuoteStatus, Partial<Record<QuoteEvent, Rule>>> = {
   ARCHIVED: {},
 };
 
-export class TransitionError extends Error {}
+export class TransitionError extends Error {
+  override name = "TransitionError";
+}
+
+/**
+ * Own-property lookup only. A plain `RULES[from][event]` would resolve inherited keys such as
+ * "toString" / "constructor" (events arrive as untrusted strings over HTTP), yielding a truthy
+ * non-rule and a TypeError instead of a TransitionError / `false`.
+ */
+function ruleFor(from: QuoteStatus, event: QuoteEvent): Rule | undefined {
+  const table = Object.hasOwn(RULES, from) ? RULES[from] : undefined;
+  return table && Object.hasOwn(table, event) ? table[event] : undefined;
+}
 
 export function canTransition(from: QuoteStatus, event: QuoteEvent, actor: Actor): boolean {
-  const rule = RULES[from][event];
+  const rule = ruleFor(from, event);
   return !!rule && rule.by.includes(actor);
 }
 
 export function transition(from: QuoteStatus, event: QuoteEvent, actor: Actor): QuoteStatus {
-  const rule = RULES[from][event];
+  const rule = ruleFor(from, event);
   if (!rule) throw new TransitionError(`${event} is not allowed from ${from}`);
   if (!rule.by.includes(actor)) throw new TransitionError(`${actor} cannot ${event} from ${from}`);
   return rule.to;
