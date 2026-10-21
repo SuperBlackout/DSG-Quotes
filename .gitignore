@@ -7,3 +7,5 @@ coverage
 .prism
 *.log
 !.env.example
+.claude/
+apps/api/test/.route-hits.jsonl
