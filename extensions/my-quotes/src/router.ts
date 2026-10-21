@@ -24,6 +24,16 @@ export function routeHref(route: Route): string {
   }
 }
 
+/**
+ * Built-in customer account page for an order. `orderId` is a Shopify GID or numeric id; the
+ * `shopify:customer-account/orders/<id>` form is assumed from the documented `.../orders` and
+ * `.../profile` protocol targets (not verified on a live store). Falls back to the orders list.
+ */
+export function orderHref(orderId: string | null | undefined): string {
+  const numeric = orderId ? /(\d+)$/.exec(orderId)?.[1] : undefined;
+  return numeric ? `shopify:customer-account/orders/${numeric}` : "shopify:customer-account/orders";
+}
+
 /** Parse the URL of `navigation.currentEntry`. Unknown paths fall back to the list. */
 export function parseRoute(url: string | null | undefined): Route {
   if (!url) return { name: "list" };

@@ -4,7 +4,7 @@
 // the state machine here. Status is used only for wording and for choosing which of the allowed
 // actions is the row's headline action.
 import type { CustomerQuote, CustomerQuoteSummary, QuoteStatus } from "../api/types";
-import { formatLongDate, formatMoney, formatRelative, toCents } from "./format";
+import { formatLongDate, formatMoney, formatRelative, formatShortDate, plural, toCents } from "./format";
 import { previousVersion } from "./diff";
 
 type BadgeTone = "auto" | "neutral" | "critical";
@@ -94,6 +94,37 @@ export function rowActions(q: CustomerQuoteSummary): RowAction[] {
 
   if (out.length === 0) out.push(A.view);
   return out;
+}
+
+/** Second line under the quote name in the list: "6 items · Owner: Dana K. · expires Nov 4". */
+export function quoteSubline(q: CustomerQuoteSummary): string {
+  const parts: string[] = [];
+  if (q.lineCount > 0 || q.status !== "DRAFT") parts.push(plural(q.lineCount, "item"));
+  if (q.ownerName) parts.push(`Owner: ${q.ownerName}`);
+  const date = q.expiresAt ? formatShortDate(q.expiresAt) : "";
+  switch (q.status) {
+    case "DRAFT":
+      parts.push("not submitted");
+      break;
+    case "SUBMITTED":
+      parts.push("sent to sales team");
+      break;
+    case "IN_REVIEW":
+      parts.push("sales is working on it");
+      break;
+    case "QUOTE_READY":
+      if (date) parts.push(`expires ${date}`);
+      break;
+    case "ACCEPTED":
+      if (date) parts.push(q.actions.canBuy ? `good until ${date}` : `expired ${date}`);
+      break;
+    case "EXPIRED":
+      if (date) parts.push(`expired ${date}`);
+      break;
+    default:
+      break;
+  }
+  return parts.join(" · ");
 }
 
 // ---------------------------------------------------------------------------------------------

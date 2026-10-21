@@ -27,7 +27,11 @@ const USD = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" 
  */
 export function formatMoney(m: Money | null | undefined): string {
   if (m === null || m === undefined || m === "") return "";
-  return USD.format(toCents(m) / 100);
+  try {
+    return USD.format(toCents(m) / 100);
+  } catch {
+    return m; // a malformed amount should show as-is, not take the whole page down
+  }
 }
 
 export function formatCents(cents: number): string {

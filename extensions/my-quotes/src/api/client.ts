@@ -4,6 +4,7 @@
 import type {
   Attachment,
   CheckoutResult,
+  CreateQuoteRequest,
   CustomerMessage,
   CustomerQuote,
   CustomerQuoteSummary,
@@ -130,6 +131,7 @@ export function createApiClient(opts: ApiClientOptions) {
     listQuotes: (p: ListQuotesParams = {}) =>
       request<Page<CustomerQuoteSummary>>("GET", `/c/quotes${toQuery({ ...p })}`),
 
+    createQuote: (body: CreateQuoteRequest) => request<CustomerQuote>("POST", "/c/quotes", body),
     getQuote: (id: string) => request<CustomerQuote>("GET", q(id)),
     updateQuote: (id: string, patch: UpdateQuoteRequest) => request<CustomerQuote>("PATCH", q(id), patch),
     deleteQuote: (id: string) => request<unknown>("DELETE", q(id)),

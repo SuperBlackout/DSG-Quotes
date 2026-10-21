@@ -17,6 +17,7 @@ export type CustomerQuoteVersion = Schemas["CustomerQuoteVersion"];
 export type CustomerQuoteActions = Schemas["CustomerQuoteActions"];
 export type CustomerMessage = Schemas["CustomerMessage"];
 
+export type CreateQuoteRequest = Schemas["CreateQuoteRequest"];
 export type UpdateQuoteRequest = Schemas["UpdateQuoteRequest"];
 export type PostMessageRequest = Schemas["PostMessageRequest"];
 export type UploadUrlRequest = Schemas["UploadUrlRequest"];
