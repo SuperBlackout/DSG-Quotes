@@ -3,5 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "echo 'qa agent: add Playwright'" }
+  "description": "DSG Quotes QA: runnable API lifecycle + contract suite (vitest) and live-store Playwright specs (skipped without E2E_STORE_URL).",
+  "scripts": {
+    "test": "vitest run",
+    "test:api": "vitest run",
+    "test:pw": "playwright test",
+    "test:pw:install": "playwright install --with-deps chromium",
+    "typecheck": "tsc -p tsconfig.json",
+    "typecheck:pw": "tsc -p tsconfig.playwright.json"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.55.0",
+    "@prisma/client": "^6.19.3",
+    "@types/node": "^20.19.43",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9",
+    "yaml": "^2.9.1"
+  }
 }
