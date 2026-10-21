@@ -34,12 +34,24 @@ envVarGroups:
         value: quotes@dsg.direct
       - key: EMAIL_REPLY_DOMAIN
         value: reply.dsg.direct
+      - key: REPLY_TOKEN_SECRET
+        sync: false          # same value for web and worker; falls back to SHOPIFY_API_SECRET when unset
+      - key: SALES_NOTIFY_EMAIL
+        sync: false          # last-resort recipient when no rep, team or manager can be found
+      - key: ADMIN_QUOTE_URL
+        sync: false          # staff link base, e.g. https://admin.shopify.com/store/<shop>/apps/dsg-quotes/quotes
+      - key: SUPPORT_EMAIL
+        value: quotes@dsg.direct
+      - key: SUPPORT_PHONE
+        sync: false
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN
         sync: false
       - key: TWILIO_MESSAGING_SERVICE_SID
         sync: false
+      - key: TWILIO_WEBHOOK_URL
+        sync: false          # https://quotes.dsg.direct/hooks/twilio-inbound (exact URL configured in Twilio)
       - key: ATTACHMENTS_BUCKET
         sync: false
       - key: ATTACHMENTS_S3_ENDPOINT
@@ -83,6 +95,8 @@ services:
     autoDeploy: false
     envVars:
       - fromGroup: dsg-quotes-shared
+      - key: WORKER_POLL_MS
+        value: "5000"
       - key: DATABASE_URL
         fromDatabase: { name: dsg-quotes-db, property: connectionString }
       - key: NODE_ENV
@@ -93,7 +107,7 @@ services:
     runtime: node
     region: ohio
     plan: starter
-    schedule: "0 * * * *"   # hourly: EXPIRE transitions. Daily 8:00 ET reminders/digest are gated inside the job by local time.
+    schedule: "0 * * * *"   # hourly: EXPIRE transitions. Daily 8:00 ET reminders/digest and the Monday weekly summary are gated inside the job by local time.
     rootDir: .
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate && pnpm -F worker build
     startCommand: pnpm -F worker cron

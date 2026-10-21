@@ -33,7 +33,7 @@ export interface Ctx {
   clock: { now: Date };
 }
 
-const TABLES = ["Event", "Message", "QuoteLine", "QuoteVersion", "Quote", "Job", "NotificationPref", "CustomerProfile", "Counter", "WebhookReceipt", "Staff"];
+const TABLES = ["Event", "Message", "QuoteLine", "QuoteVersion", "Quote", "Job", "NotificationPref", "CustomerProfile", "Counter", "WebhookReceipt", "Staff", "Team", "TeamMember", "NotificationLog", "SmsOptOut"];
 
 export function useWorker(): Ctx {
   const ctx = {} as Ctx;
@@ -86,7 +86,7 @@ export async function mkCustomerPrefs(
   p: PrismaClient,
   o: { events?: string[]; sms?: boolean; email?: boolean; optedIn?: boolean; quietStart?: string | null; quietEnd?: string | null; phone?: string } = {},
 ) {
-  const events = o.events ?? ["SUBMITTED", "QUOTE_READY", "NEW_MESSAGE", "CHANGES_REQUESTED", "ACCEPTED", "ORDERED", "EXPIRING"];
+  const events = o.events ?? ["QUOTE_RECEIVED", "QUOTE_READY", "NEW_MESSAGE", "ACCEPTED", "ORDERED", "EXPIRING", "WEEKLY_SUMMARY"];
   await p.notificationPref.createMany({
     data: events.map((event) => ({
       shop: SHOP,
@@ -113,4 +113,12 @@ export async function mkStaffPrefs(p: PrismaClient, staffId: string, events: str
 export const mkEvent = (p: PrismaClient, quoteId: string, type: string, actorType: "CUSTOMER" | "STAFF" | "SYSTEM", payload: Record<string, unknown> = {}, createdAt = NOW) =>
   p.event.create({ data: { quoteId, type, actorType, payload: payload as object, createdAt } });
 
-export const logs = (p: PrismaClient, quoteId: string) => p.event.findMany({ where: { quoteId, type: "NOTIFICATION" }, orderBy: { createdAt: "asc" } });
+/** NotificationLog rows of a quote, oldest first. */
+export const logs = (p: PrismaClient, quoteId: string) => p.notificationLog.findMany({ where: { quoteId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+
+/** A team with the given staff as members (Quote.teamId points at Team.id). */
+export async function mkTeam(p: PrismaClient, name: string, staffIds: string[]) {
+  const team = await p.team.create({ data: { shop: SHOP, name } });
+  await p.teamMember.createMany({ data: staffIds.map((staffId) => ({ teamId: team.id, staffId })) });
+  return team;
+}

@@ -67,10 +67,10 @@ describe("daily 8:00 ET reminders and rep digest", () => {
   });
 
   it("sends each rep one digest per day, only when there is something to act on, and managers also get the unassigned queue", async () => {
-    ctx.clock.now = new Date("2026-03-02T13:05:00Z");
+    ctx.clock.now = new Date("2026-03-03T13:05:00Z");
     const rep = await mkStaff(ctx.prisma, { email: "rita@dsg.test", name: "Rita" });
     await mkStaff(ctx.prisma, { email: "idle@dsg.test", name: "Idle" });
-    const mgr = await mkStaff(ctx.prisma, { email: "boss@dsg.test", name: "Boss", isManager: true });
+    const mgr = await mkStaff(ctx.prisma, { email: "boss@dsg.test", name: "Boss", role: "manager" });
     await mkQuote(ctx.prisma, { status: "SUBMITTED", assignedRepId: rep.id, title: "Needs reply" });
     await mkQuote(ctx.prisma, { status: "SUBMITTED", title: "Nobody has it" });
     await mkQuote(ctx.prisma, { status: "QUOTE_READY", assignedRepId: mgr.id, expiresAt: new Date("2026-03-04T00:00:00Z"), title: "Lapsing" });
@@ -86,13 +86,13 @@ describe("daily 8:00 ET reminders and rep digest", () => {
 
     await runCron(ctx.deps);
     expect(ctx.email.sent).toHaveLength(2); // once a day
-    ctx.clock.now = new Date("2026-03-03T13:05:00Z");
+    ctx.clock.now = new Date("2026-03-04T13:05:00Z");
     await runCron(ctx.deps);
     expect(ctx.email.sent).toHaveLength(4);
   });
 
   it("a rep can opt out of the digest", async () => {
-    ctx.clock.now = new Date("2026-03-02T13:05:00Z");
+    ctx.clock.now = new Date("2026-03-03T13:05:00Z");
     const rep = await mkStaff(ctx.prisma);
     await mkQuote(ctx.prisma, { status: "SUBMITTED", assignedRepId: rep.id });
     await ctx.prisma.notificationPref.create({ data: { shop: "dsg-test.myshopify.com", staffId: rep.id, event: "DIGEST", email: false } });

@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 // Shared with the worker (which signs the Reply-To addresses and sends the alerts). Dependency-free modules, imported by path
 // because apps/api does not depend on the worker package.
-import { optOutPhone, recordInboundMessage } from "../../../worker/src/inbound";
+import { isSmsOptedOut, optInPhone, optOutPhone, recordInboundMessage } from "../../../worker/src/inbound";
 import { extractEmail, parseReplyAddress } from "../../../worker/src/lib/reply-token";
 import { normalizePhone, smsKeyword } from "../../../worker/src/lib/phone";
 import { htmlToText, stripQuotedReply } from "../../../worker/src/lib/strip-quoted";
@@ -174,41 +174,39 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
           if (await tx.webhookReceipt.findUnique({ where: { id: `sms:${sid}` } })) return { kind: "duplicate" as const };
           await tx.webhookReceipt.create({ data: { id: `sms:${sid}`, topic: "twilio-inbound" } });
         }
-        // The last alert we texted to this number tells us which quote (and which person) a reply belongs to.
-        const last = await tx.event.findFirst({
-          where: {
-            type: "NOTIFICATION",
-            quote: { shop },
-            AND: [{ payload: { path: ["channel"], equals: "sms" } }, { payload: { path: ["to"], equals: from } }, { payload: { path: ["status"], equals: "SENT" } }],
-          },
+        const now = deps.now();
+        // The last alert we texted to this number (NotificationLog, written by the worker) tells us which quote a reply belongs to.
+        const lastLog = await tx.notificationLog.findFirst({
+          where: { channel: "SMS", to: from, status: "SENT", quoteId: { not: null } },
           orderBy: { createdAt: "desc" },
         });
-        const ctx = last ? rec(last.payload) : null;
+        const last = lastLog?.quoteId ? await tx.quote.findFirst({ where: { id: lastLog.quoteId, shop } }) : null;
 
         if (keyword === "STOP") {
-          const n = await optOutPhone(tx, shop, from);
-          if (last) {
-            // Built outside the `data:` literal: this `status` is a send-log field, not Quote.status (integrity grep).
-            const payload = { channel: "sms", to: from, status: "OPTED_OUT", keyword: "STOP", recipientKind: ctx?.recipientKind ?? null, recipientKey: ctx?.recipientKey ?? null, rows: n };
-            await tx.event.create({ data: { quoteId: last.quoteId, type: "NOTIFICATION", actorType: "SYSTEM", payload, notifiedAt: deps.now(), createdAt: deps.now() } });
-          }
+          await optOutPhone(tx, shop, from, { source: "twilio-stop", quoteId: last?.id ?? null, now });
           return { kind: "stop" as const };
         }
-        if (keyword === "START") return { kind: "start" as const };
-        if (!last || !ctx) return { kind: "no_context" as const };
+        if (keyword === "START") {
+          // An explicit START lifts the STOP record; consent on the preference rows stays cleared until the customer opts in again.
+          await optInPhone(tx, from, { now });
+          return { kind: "start" as const };
+        }
+        if (!last) return { kind: "no_context" as const };
+        // Never accept an SMS conversation from a number that has opted out.
+        if (await isSmsOptedOut(tx, from)) return { kind: "no_context" as const };
 
-        const quote = await tx.quote.findFirst({ where: { id: last.quoteId, shop } });
         const body = text.trim().slice(0, 1600);
-        if (!quote || !body) return { kind: "no_context" as const };
-        // Re-check consent: never accept SMS conversation from a number that has since opted out.
-        if (ctx.recipientKind === "staff") {
-          const staff = await tx.staff.findFirst({ where: { id: str(ctx.recipientKey), shop } });
-          if (!staff) return { kind: "no_context" as const };
-          await recordInboundMessage(tx, { quoteId: quote.id, authorType: "STAFF", authorId: staff.id, authorName: staff.name, body, channel: "SMS", now: deps.now() });
+        if (!body) return { kind: "no_context" as const };
+        // Who is this number? A rep (their Staff.phone or the number on their staff preference rows), else the quote's customer.
+        const byPref = await tx.notificationPref.findFirst({ where: { shop, staffId: { not: null }, phone: from, smsOptInAt: { not: null } }, select: { staffId: true } });
+        const staff = await tx.staff.findFirst({ where: { shop, active: true, OR: [{ phone: from }, ...(byPref?.staffId ? [{ id: byPref.staffId }] : [])] } });
+        if (staff) {
+          await recordInboundMessage(tx, { quoteId: last.id, authorType: "STAFF", authorId: staff.id, authorName: staff.name, body, channel: "SMS", now });
         } else {
-          const consent = await tx.notificationPref.count({ where: { shop, customerId: quote.customerId, phone: from, smsOptInAt: { not: null } } });
+          // Re-check consent: the sender must hold this customer's opt-in for this number.
+          const consent = await tx.notificationPref.count({ where: { shop, customerId: last.customerId, phone: from, smsOptInAt: { not: null } } });
           if (consent === 0) return { kind: "no_context" as const };
-          await recordInboundMessage(tx, { quoteId: quote.id, authorType: "CUSTOMER", authorId: quote.customerId, authorName: quote.customerName, body, channel: "SMS", now: deps.now() });
+          await recordInboundMessage(tx, { quoteId: last.id, authorType: "CUSTOMER", authorId: last.customerId, authorName: last.customerName, body, channel: "SMS", now });
         }
         return { kind: "posted" as const };
       });

@@ -27,7 +27,7 @@ export async function sendRepDigests(deps: WorkerDeps): Promise<{ sent: number; 
   const { shop } = deps.config;
   const soon = new Date(now.getTime() + 3 * DAY);
   const [staff, open, optOuts] = await Promise.all([
-    deps.prisma.staff.findMany({ where: { shop } }),
+    deps.prisma.staff.findMany({ where: { shop, active: true } }),
     deps.prisma.quote.findMany({ where: { shop, deletedAt: null, status: { in: ["SUBMITTED", "IN_REVIEW", "CHANGES_REQUESTED", "QUOTE_READY", "ACCEPTED"] } }, orderBy: { statusChangedAt: "asc" } }),
     deps.prisma.notificationPref.findMany({ where: { shop, event: "DIGEST", email: false, staffId: { not: null } } }),
   ]);
@@ -42,7 +42,7 @@ export async function sendRepDigests(deps: WorkerDeps): Promise<{ sent: number; 
     const sections: Section[] = [
       { title: "Needs your response", quotes: mine.filter((q) => NEEDS_RESPONSE.includes(q.status)) },
       { title: "Expiring within 3 days", quotes: mine.filter((q) => (q.status === "QUOTE_READY" || q.status === "ACCEPTED") && q.expiresAt && q.expiresAt <= soon) },
-      ...(s.isManager ? [{ title: "Unassigned", quotes: open.filter((q) => !q.assignedRepId && (q.status === "SUBMITTED" || q.status === "CHANGES_REQUESTED")) }] : []),
+      ...(s.role === "manager" || s.role === "admin" ? [{ title: "Unassigned", quotes: open.filter((q) => !q.assignedRepId && (q.status === "SUBMITTED" || q.status === "CHANGES_REQUESTED")) }] : []),
     ].filter((x) => x.quotes.length > 0);
     if (sections.length === 0) continue;
 
@@ -61,9 +61,11 @@ export async function sendRepDigests(deps: WorkerDeps): Promise<{ sent: number; 
         tag: "rep_digest",
         metadata: { staffId: s.id },
       });
+      await deps.prisma.notificationLog.create({ data: { quoteId: null, channel: "EMAIL", to, status: "SENT", providerId: res.providerId, createdAt: deps.now() } });
       deps.log.info("rep digest sent", { staffId: s.id, to, providerId: res.providerId, quotes: count });
       sent++;
     } catch (e) {
+      await deps.prisma.notificationLog.create({ data: { quoteId: null, channel: "EMAIL", to, status: "FAILED", providerId: null, createdAt: deps.now() } }).catch(() => undefined);
       deps.log.error("rep digest failed", { staffId: s.id, error: (e as Error).message });
       failed++;
     }

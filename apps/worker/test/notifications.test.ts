@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { LOG_TYPE, processBatch } from "../src/processor";
+import { processBatch } from "../src/processor";
 import { parseReplyAddress } from "../src/lib/reply-token";
 import { ProviderError } from "../src/providers/types";
-import { CUSTOMER, PHONE, REP_PHONE, logs, mkCustomerPrefs, mkEvent, mkQuote, mkStaff, mkStaffPrefs, useWorker, config } from "./helpers";
+import { CUSTOMER, PHONE, REP_PHONE, logs, mkCustomerPrefs, mkEvent, mkQuote, mkStaff, mkStaffPrefs, mkTeam, useWorker, config } from "./helpers";
 
 const ctx = useWorker();
-const ALL = ["SUBMITTED", "QUOTE_READY", "NEW_MESSAGE", "CHANGES_REQUESTED", "ACCEPTED", "ORDERED", "EXPIRING"];
+const ALL = ["QUOTE_RECEIVED", "QUOTE_READY", "NEW_MESSAGE", "CHANGES_REQUESTED", "ACCEPTED", "ORDERED", "EXPIRING"];
 
 async function world() {
   const rep = await mkStaff(ctx.prisma, { name: "Rita Rep", email: "rita@dsg.test" });
@@ -50,9 +50,9 @@ describe("notifications table: every row fires on email and SMS", () => {
     // links
     for (const m of ctx.sms.sent) expect(m.body).toMatch(m.to === PHONE ? /dsg\.test\/apps\/quotes\/quotes\// : /admin\.test\/quotes\//);
     // every send is logged with a provider id; nothing is left pending
-    const sent = (await logs(ctx.prisma, quote.id)).filter((l) => (l.payload as any).status === "SENT");
+    const sent = (await logs(ctx.prisma, quote.id)).filter((l) => l.status === "SENT");
     expect(sent.length).toBe(ctx.email.sent.length + ctx.sms.sent.length);
-    expect(sent.every((l) => typeof (l.payload as any).providerId === "string")).toBe(true);
+    expect(sent.every((l) => typeof l.providerId === "string")).toBe(true);
     expect(await ctx.prisma.event.count({ where: { notifiedAt: null } })).toBe(0);
   });
 });
@@ -111,10 +111,12 @@ describe("recipients and preferences", () => {
   });
 
   it("unassigned quote goes to the team, else managers, else the fallback address", async () => {
-    const a = await mkStaff(ctx.prisma, { email: "a@dsg.test", teamId: "t1" });
-    await mkStaff(ctx.prisma, { email: "b@dsg.test", teamId: "t1" });
-    await mkStaff(ctx.prisma, { email: "boss@dsg.test", isManager: true });
-    const q1 = await mkQuote(ctx.prisma, { teamId: "t1", status: "SUBMITTED" });
+    const a = await mkStaff(ctx.prisma, { email: "a@dsg.test" });
+    const b = await mkStaff(ctx.prisma, { email: "b@dsg.test" });
+    await mkStaff(ctx.prisma, { email: "boss@dsg.test", role: "manager" });
+    await mkStaff(ctx.prisma, { email: "gone@dsg.test", role: "admin", active: false });
+    const team = await mkTeam(ctx.prisma, "East", [a.id, b.id]);
+    const q1 = await mkQuote(ctx.prisma, { teamId: team.id, status: "SUBMITTED" });
     await mkEvent(ctx.prisma, q1.id, "SUBMIT", "CUSTOMER");
     await processBatch(ctx.deps);
     expect(ctx.email.sent.map((m) => m.to).filter((t) => t.endsWith("@dsg.test")).sort()).toEqual(["a@dsg.test", "b@dsg.test"]);
@@ -123,6 +125,7 @@ describe("recipients and preferences", () => {
     await mkEvent(ctx.prisma, q2.id, "SUBMIT", "CUSTOMER");
     await processBatch(ctx.deps);
     expect(ctx.email.sent.map((m) => m.to)).toContain("boss@dsg.test");
+    expect(ctx.email.sent.map((m) => m.to)).not.toContain("gone@dsg.test"); // inactive staff are never notified
     expect(a.id).toBeTruthy();
     await ctx.prisma.staff.deleteMany();
     ctx.email.sent.length = 0;
@@ -148,7 +151,7 @@ describe("recipients and preferences", () => {
     await processBatch(ctx.deps);
     expect(ctx.email).toBeTruthy();
     const l = await logs(ctx.prisma, quote.id);
-    expect(l.some((x) => (x.payload as any).reason === "sms_disabled")).toBe(true);
+    expect(l.some((x) => x.channel === "SMS" && x.status === "SKIPPED_SMS_DISABLED")).toBe(true);
   });
 });
 
@@ -238,9 +241,10 @@ describe("quiet hours defer SMS only", () => {
     ctx.clock.now = new Date("2026-03-02T17:00:01Z");
     await processBatch(ctx.deps);
     expect(ctx.sms.sent).toHaveLength(1);
-    const l = (await logs(ctx.prisma, quote.id)).filter((x) => (x.payload as any).channel === "sms");
+    const l = (await logs(ctx.prisma, quote.id)).filter((x) => x.channel === "SMS" && x.status === "SENT");
     expect(l).toHaveLength(1);
-    expect((l[0]!.payload as any).providerId).toBe("fake-sms-1");
+    expect(l[0]!.providerId).toBe("fake-sms-1");
+    expect(await ctx.prisma.event.count({ where: { type: "SMS_DEFERRED" } })).toBe(0); // queue entry consumed
     expect(await ctx.prisma.event.count({ where: { notifiedAt: null } })).toBe(0);
   });
 
@@ -294,7 +298,7 @@ describe("delivery robustness", () => {
     await mkEvent(ctx.prisma, quote.id, "SEND_REVISION", "STAFF");
     await processBatch(ctx.deps);
     const l = await logs(ctx.prisma, quote.id);
-    expect(l.some((x) => (x.payload as any).status === "FAILED")).toBe(true);
+    expect(l.some((x) => x.status === "FAILED" && x.channel === "EMAIL" && x.to === "dana@acme.test")).toBe(true);
     expect(await ctx.prisma.event.count({ where: { notifiedAt: null } })).toBe(0);
   });
 
@@ -318,11 +322,13 @@ describe("delivery robustness", () => {
     expect(prefs.every((p) => !p.sms && p.smsOptInAt === null)).toBe(true);
   });
 
-  it("log rows are the only thing written besides notifiedAt (type " + LOG_TYPE + ")", async () => {
+  it("sends are logged in NotificationLog and nothing else is added to the quote timeline", async () => {
     const { quote } = await world();
     await mkEvent(ctx.prisma, quote.id, "SEND_REVISION", "STAFF");
     await processBatch(ctx.deps);
     const types = new Set((await ctx.prisma.event.findMany({ where: { quoteId: quote.id } })).map((e) => e.type));
-    expect([...types].sort()).toEqual([LOG_TYPE, "SEND_REVISION"]);
+    expect([...types]).toEqual(["SEND_REVISION"]);
+    const l = await logs(ctx.prisma, quote.id);
+    expect(l.map((x) => `${x.channel}:${x.to}:${x.status}`).sort()).toEqual(["EMAIL:dana@acme.test:SENT", `SMS:${PHONE}:SENT`]);
   });
 });
