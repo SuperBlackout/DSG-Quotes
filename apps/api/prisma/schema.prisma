@@ -64,6 +64,16 @@ model Session {
   expires     DateTime?
   accessToken String
   userId      BigInt?
+  // Fields @shopify/shopify-app-session-storage-prisma writes for online (per-staff) sessions.
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean?
+  locale              String?
+  collaborator        Boolean?
+  emailVerified       Boolean?
+  refreshToken        String?
+  refreshTokenExpires DateTime?
 }
 
 model Job {
