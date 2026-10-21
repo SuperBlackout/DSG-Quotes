@@ -131,7 +131,18 @@ describe("quote lifecycle: dealer Dana (Acme) and rep Rita", () => {
       ...cur.workingLines.map((l: any) => ({ id: l.id, variantId: l.variantId, qty: l.qty, quotedPrice: l.variantId === F.V_PIPE ? "100.00" : l.quotedPrice })),
       { variantId: F.V_NOCOST, qty: 20, quotedPrice: "9.00" },
     ];
-    ok(await w.rep1.put(`/s/quotes/${s.id}/draft-revision`, { lines, freight: "35.00", repNote: "Added gaskets" }), 200, "save v2 revision");
+    const saved = ok(await w.rep1.put(`/s/quotes/${s.id}/draft-revision`, { lines, freight: "35.00", repNote: "Added gaskets" }), 200, "save v2 revision");
+    expect(saved.nextVersionNo).toBe(2);
+    // The gasket has no inventory cost: the margin is unknown, so it needs a manager before it can go out (contract 0.2.0).
+    const gasket = saved.workingLines.find((l: any) => l.variantId === F.V_NOCOST);
+    expect(gasket).toMatchObject({ costUnknown: true, marginPct: null, belowFloor: true, cost: null });
+    const blocked = await w.rep1.post(`/s/quotes/${s.id}/send`);
+    expect(blocked.status).toBe(422);
+    expect(blocked.body).toMatchObject({ code: "FLOOR_APPROVAL_REQUIRED", details: { lineIds: [gasket.id] } });
+    // A rep cannot approve it herself; she asks, the manager approves, then the send goes through.
+    expect((await w.rep1.post(`/s/quotes/${s.id}/approve-floor`, {})).status).toBe(403);
+    ok(await w.rep1.post(`/s/quotes/${s.id}/request-floor-approval`, { lineIds: [gasket.id], note: "No cost on file" }), 200, "request approval");
+    ok(await w.manager.post(`/s/quotes/${s.id}/approve-floor`, { lineIds: [gasket.id] }), 200, "approve");
     ok(await w.rep1.post(`/s/quotes/${s.id}/send`), 200, "send v2");
     const v = ok(await w.dana.get(`/c/quotes/${s.id}`), 200, "customer view");
     expect(v).toMatchObject({ status: "QUOTE_READY", currentVersion: 2 });
@@ -229,12 +240,13 @@ describe("quote lifecycle: dealer Dana (Acme) and rep Rita", () => {
   it("orders/create webhook (matched by the quote tag) -> ORDERED, once, and the order is linked", async () => {
     const r = await w.webhook("orders/create", orderPayload(s.number, 9001));
     expect(r.status).toBe(200);
-    expect(r.body.result).toBe("ordered");
+    expect(r.body).toBeUndefined(); // bare 200, the outcome is in a header
+    expect(r.headers["x-webhook-result"]).toBe("ordered");
     const view = ok(await w.dana.get(`/c/quotes/${s.id}`), 200, "view");
     expect(view).toMatchObject({ status: "ORDERED", waitingOn: "none", orderId: "gid://shopify/Order/9001" });
     expect(view.actions).toMatchObject({ canBuy: false, canAccept: false, canReopen: false, canDelete: false, canDecline: false });
     // A re-delivery of the same order changes nothing.
-    expect((await w.webhook("orders/create", orderPayload(s.number, 9001))).body.result).toBe("already_ordered");
+    expect((await w.webhook("orders/create", orderPayload(s.number, 9001))).headers["x-webhook-result"]).toBe("already_ordered");
     // And it can no longer be bought again.
     const again = await w.dana.post(`/c/quotes/${s.id}/checkout`);
     expect(again.status).toBe(409);

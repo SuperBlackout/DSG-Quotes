@@ -181,6 +181,22 @@ export function validateResponse(method: string, routePattern: string, status: n
   return validate(body, schema);
 }
 
+/**
+ * The response Content-Type must be one the contract declares for that status (e.g. `application/pdf` for the PDF route,
+ * `application/json` elsewhere). Errors fall under `default`, which is JSON. Returns a message, or null when fine.
+ */
+export function checkMediaType(method: string, routePattern: string, status: number, contentType: string): string | null {
+  const found = findOperation(method, routePattern);
+  if (!found) return null;
+  const responses = found.op.responses ?? {};
+  const resp = responses[String(status)] ?? (status >= 400 ? responses.default : undefined);
+  if (!resp) return null;
+  const declared = Object.keys(deref(resp)?.content ?? {});
+  if (declared.length === 0) return contentType ? `contract declares no body for ${status} but the response has Content-Type ${contentType}` : null;
+  const actual = contentType.split(";")[0]!.trim().toLowerCase();
+  return declared.includes(actual) ? null : `Content-Type ${actual || "(none)"} is not one of the declared ${declared.join(", ")}`;
+}
+
 /** Validate a request body the test sent (only meaningful when the API accepted it). */
 export function validateRequestBody(method: string, routePattern: string, body: unknown): string[] {
   const found = findOperation(method, routePattern);

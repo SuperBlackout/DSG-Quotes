@@ -54,10 +54,80 @@ describe("floor approval flow (Screen 7)", () => {
     expect((await w.rep1.post(`/s/quotes/${q.id}/send`)).body.code).toBe("FLOOR_APPROVAL_REQUIRED");
   });
 
-  it("pricing at or above the floor, or on a line with unknown cost, needs no approval", async () => {
-    const q = await submitted(w.dana, [{ variantId: F.V_THIN, qty: 1 }, { variantId: F.V_NOCOST, qty: 1 }]);
-    await claimAndPrice(w.rep1, q.id, { [F.V_THIN]: "110.00", [F.V_NOCOST]: "1.00" }); // 16.9% margin; cost unknown
+  it("pricing at or above the floor needs no approval", async () => {
+    const q = await submitted(w.dana, [{ variantId: F.V_THIN, qty: 1 }]);
+    const staff = await claimAndPrice(w.rep1, q.id, { [F.V_THIN]: "110.00" }); // 16.9% margin
+    expect(staff.workingLines[0]).toMatchObject({ belowFloor: false, costUnknown: false });
     ok(await w.rep1.post(`/s/quotes/${q.id}/send`), 200, "send");
+  });
+
+  it("a line with UNKNOWN cost always needs manager approval: costUnknown, margin null, send blocked until a manager approves", async () => {
+    const q = await submitted(w.dana, [{ variantId: F.V_THIN, qty: 1 }, { variantId: F.V_NOCOST, qty: 1 }]);
+    const staff = await claimAndPrice(w.rep1, q.id, { [F.V_THIN]: "110.00", [F.V_NOCOST]: "1.00" }); // priced way above list: still unknown cost
+    const [thin, gasket] = staff.workingLines;
+    expect(thin).toMatchObject({ costUnknown: false, belowFloor: false });
+    expect(gasket).toMatchObject({ variantId: F.V_NOCOST, cost: null, costUnknown: true, marginPct: null, belowFloor: true, floorApproved: false });
+    expect(staff.belowFloor).toBe(true);
+    const blocked = await w.rep1.post(`/s/quotes/${q.id}/send`);
+    expect(blocked.status).toBe(422);
+    expect(blocked.body).toMatchObject({ code: "FLOOR_APPROVAL_REQUIRED", details: { lineIds: [gasket.id], costUnknownLineIds: [gasket.id] } });
+    expect(await w.prisma.quoteVersion.count({ where: { quoteId: q.id } })).toBe(0);
+    // Manager approval is the only way through, and it covers exactly that price and quantity.
+    const approved = ok(await w.manager.post(`/s/quotes/${q.id}/approve-floor`, {}), 200, "approve");
+    expect(approved.workingLines[1]).toMatchObject({ costUnknown: true, floorApproved: true });
+    expect(approved.belowFloor).toBe(false);
+    const edited = await reprice(w.rep1, q.id, { [F.V_NOCOST]: "2.00" });
+    expect(edited.workingLines[1]).toMatchObject({ costUnknown: true, floorApproved: false });
+    expect((await w.rep1.post(`/s/quotes/${q.id}/send`)).body.code).toBe("FLOOR_APPROVAL_REQUIRED");
+    ok(await w.admin.post(`/s/quotes/${q.id}/approve-floor`, {}), 200, "admin approves too");
+    ok(await w.rep1.post(`/s/quotes/${q.id}/send`), 200, "send");
+    // The dealer's view (privacy-scanned) shows the price, nothing about cost, floor or approval.
+    expect(ok(await w.dana.get(`/c/quotes/${q.id}`), 200, "customer").lines.map((l: any) => l.quotedPrice)).toEqual(["110.00", "2.00"]);
+  });
+
+  it("request-floor-approval: no status change, one FLOOR_APPROVAL_REQUESTED event naming the flagged lines, never visible to the dealer", async () => {
+    const { q, line } = await belowFloor();
+    const before = (await w.prisma.quote.findUniqueOrThrow({ where: { id: q.id } })).status;
+    const r = ok(await w.rep1.post(`/s/quotes/${q.id}/request-floor-approval`, { note: F.SECRET_APPROVAL_NOTE }), 200, "request");
+    expect(r.status).toBe(before);
+    const rows = await eventRows(w, q.id, "FLOOR_APPROVAL_REQUESTED");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actorType).toBe("STAFF");
+    expect(rows[0]!.actorId).toBe(w.staff.rep1.id);
+    expect(rows[0]!.notifiedAt).toBeNull(); // the worker fans it out to managers
+    expect(rows[0]!.payload).toMatchObject({ lineIds: [line.id], costUnknownLineIds: [], note: F.SECRET_APPROVAL_NOTE, requester: { id: w.staff.rep1.id, name: F.REP1.name } });
+    // Appears in the staff timeline, not in anything the dealer can load.
+    expect(r.events.map((e: any) => e.type)).toContain("FLOOR_APPROVAL_REQUESTED");
+    const view = ok(await w.dana.get(`/c/quotes/${q.id}`), 200, "customer");
+    expect(JSON.stringify(view)).not.toMatch(/FLOOR_APPROVAL|floor/i);
+    // Still blocked until a manager acts; managers may also request on a rep's behalf.
+    expect((await w.rep1.post(`/s/quotes/${q.id}/send`)).status).toBe(422);
+    ok(await w.manager.post(`/s/quotes/${q.id}/request-floor-approval`, {}), 200, "manager can request too");
+    expect(await eventRows(w, q.id, "FLOOR_APPROVAL_REQUESTED")).toHaveLength(2);
+  });
+
+  it("request-floor-approval errors: nothing flagged = 422, unknown line id = 422, not while the quote is closed = 409, 404 for a ghost quote", async () => {
+    const q = await submitted(w.dana, [{ variantId: F.V_VALVE, qty: 1 }]);
+    await claimAndPrice(w.rep1, q.id);
+    const none = await w.rep1.post(`/s/quotes/${q.id}/request-floor-approval`, {});
+    expect(none.status).toBe(422);
+    expect(none.body.code).toBe("VALIDATION_FAILED");
+    expect((await w.rep1.post(`/s/quotes/${q.id}/request-floor-approval`, { lineIds: ["ghost"] })).status).toBe(422);
+    expect((await w.rep1.post("/s/quotes/ghost/request-floor-approval", {})).status).toBe(404);
+    ok(await w.rep1.post(`/s/quotes/${q.id}/decline`, {}), 200, "decline");
+    const closed = await w.rep1.post(`/s/quotes/${q.id}/request-floor-approval`, {});
+    expect(closed.status).toBe(409);
+    expect(closed.body.code).toBe("NOT_EDITABLE");
+    expect(await eventRows(w, q.id, "FLOOR_APPROVAL_REQUESTED")).toHaveLength(0);
+  });
+
+  it("an admin can approve like a manager; a deactivated manager cannot do anything", async () => {
+    const { q } = await belowFloor();
+    ok(await w.admin.post(`/s/quotes/${q.id}/approve-floor`, {}), 200, "admin approve");
+    await w.prisma.staff.update({ where: { id: w.staff.manager.id }, data: { active: false } });
+    const r = await w.manager.post(`/s/quotes/${q.id}/approve-floor`, {});
+    expect(r.status).toBe(403);
+    expect(r.body.code).toBe("FORBIDDEN");
   });
 
   it("the floor is the assigned rep's own percentage", async () => {
@@ -175,29 +245,40 @@ describe("checkout (accept -> buy)", () => {
     const acc = await acceptedQuote(w);
     const co = ok(await w.dana.post(`/c/quotes/${acc.id}/checkout`), 200, "checkout");
     const early = await sentQuote(w);
-    expect((await w.webhook("orders/create", orderPayload(early.number, 1))).body.result).toBe("ignored_status");
-    expect((await w.webhook("orders/create", { id: 2, admin_graphql_api_id: "gid://shopify/Order/2", tags: "vip" })).body.result).toBe("no_matching_quote");
+    const result = (r: { status: number; body: any; headers: Record<string, any> }) => {
+      expect(r.status).toBe(200);
+      expect(r.body, "webhooks answer a bare 200").toBeUndefined();
+      return r.headers["x-webhook-result"];
+    };
+    expect(result(await w.webhook("orders/create", orderPayload(early.number, 1)))).toBe("ignored_status");
+    expect(result(await w.webhook("orders/create", { id: 2, admin_graphql_api_id: "gid://shopify/Order/2", tags: "vip" }))).toBe("no_matching_quote");
     expect((await w.webhook("orders/create", orderPayload(acc.number, 3), { secret: "wrong" })).status).toBe(401);
     expect((await w.webhook("orders/create", orderPayload(acc.number, 3), { shop: "evil.myshopify.com" })).status).toBe(401);
     expect((await w.dana.get(`/c/quotes/${acc.id}`)).body.status).toBe("ACCEPTED");
     const r = await w.webhook("orders/create", { id: 55, draft_order_id: Number(co.draftOrderId.split("/").pop()), tags: "" });
-    expect(r.body.result).toBe("ordered");
+    expect(result(r)).toBe("ordered");
     expect((await w.dana.get(`/c/quotes/${acc.id}`)).body).toMatchObject({ status: "ORDERED", orderId: "gid://shopify/Order/55" });
-    expect((await w.webhook("orders/create", { id: 55, draft_order_id: 1 }, { id: "same" })).status).toBe(200);
+    // Redelivery with the same X-Shopify-Webhook-Id is deduplicated, still a bare 200.
+    const first = await w.webhook("orders/create", { id: 56, draft_order_id: 1 }, { id: "same" });
+    expect(result(first)).toBe("no_matching_quote");
+    expect(result(await w.webhook("orders/create", { id: 56, draft_order_id: 1 }, { id: "same" }))).toBe("duplicate");
   });
 
   it("draft_orders/update records the status and never changes the quote status itself", async () => {
     const acc = await acceptedQuote(w);
     const co = ok(await w.dana.post(`/c/quotes/${acc.id}/checkout`), 200, "checkout");
     const r = await w.webhook("draft_orders/update", { admin_graphql_api_id: co.draftOrderId, status: "invoice_sent" });
-    expect(r.body.result).toBe("draft_order_synced");
+    expect(r.status).toBe(200);
+    expect(r.body).toBeUndefined();
+    expect(r.headers["x-webhook-result"]).toBe("draft_order_synced");
     expect((await w.dana.get(`/c/quotes/${acc.id}`)).body.status).toBe("ACCEPTED");
   });
 
   it("customer-data redaction wipes personal data from the dealer's quotes", async () => {
     const q = await draftWith(w.dana);
     const r = await w.webhook("customers/redact", { customer: { id: Number(F.DANA.id.split("/").pop()) } });
-    expect(r.body.result).toBe("customer_redacted");
+    expect(r.status).toBe(200);
+    expect(r.headers["x-webhook-result"]).toBe("customer_redacted");
     const row = await w.prisma.quote.findUniqueOrThrow({ where: { id: q.id } });
     expect(row.customerName).toBe("Redacted");
   });
