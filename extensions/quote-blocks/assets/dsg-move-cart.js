@@ -153,24 +153,18 @@
         var lines = (cart.items || []).map(function (i) { return { variantId: Q.gid(i.variant_id), qty: i.quantity }; });
         if (!lines.length) throw new Q.ApiError(0, 'EMPTY_CART', 'Your cart is empty, so there is nothing to move.');
         var target;
-        var pre = Promise.resolve();
         if (!existing) {
           target = { mode: 'new', title: job.value.trim(), newJob: Object.assign({ name: job.value.trim() }, poV ? { poNumber: poV } : {}) };
-          if (poV) target.poNumber = poV;
-          if (neededV) target.neededBy = neededV;
-          if (noteV) target.notesToSales = noteV;
         } else {
           target = { mode: 'existing', quoteId: select.value };
-          // the existing-target shape only carries the quote id, so header fields go through PATCH first
-          var patch = {};
-          if (poV) patch.poNumber = poV;
-          if (neededV) patch.neededBy = neededV;
-          if (noteV) patch.notesToSales = noteV;
-          if (Object.keys(patch).length) pre = Q.api('PATCH', '/c/quotes/' + encodeURIComponent(select.value), patch, base);
         }
-        return pre.then(function () {
-          return Q.api('POST', '/c/quotes/from-cart', { cartLines: lines, target: target, submit: !!submit, emptyCart: shouldEmpty }, base);
-        });
+        // contract 0.2.0: both modes carry the optional header fields; on an existing draft the API
+        // overwrites a field only when it is present, so an untouched note is never wiped.
+        if (poV) target.poNumber = poV;
+        if (neededV) target.neededBy = neededV;
+        if (noteV) target.notesToSales = noteV;
+        // emptyCart is informational only; the cart is cleared client-side after the 2xx below.
+        return Q.api('POST', '/c/quotes/from-cart', { cartLines: lines, target: target, submit: !!submit, emptyCart: shouldEmpty }, base);
       }).then(function (quote) {
         var after = shouldEmpty
           ? root.fetch('/cart/clear.js', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } })
