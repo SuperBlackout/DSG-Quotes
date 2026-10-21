@@ -1,6 +1,7 @@
 import type {
   BuyerContext,
   CompleteDraftOrderResult,
+  CustomerSearchResult,
   DraftOrderInput,
   DraftOrderResult,
   ShopifyGateway,
@@ -53,6 +54,22 @@ export class FakeShopify implements ShopifyGateway {
 
   async getVariantPricing(buyer: { companyLocationId: string }, variantId: string) {
     return this.variants.get(`${variantId}@${buyer.companyLocationId}`) ?? this.variants.get(variantId) ?? null;
+  }
+
+  async searchCustomers(query: string, limit: number): Promise<CustomerSearchResult[]> {
+    const q = query.trim().toLowerCase();
+    return [...this.buyers.values()]
+      .filter((b) => [b.name, b.email ?? "", b.phone ?? "", b.companyName].some((f) => f.toLowerCase().includes(q)))
+      .slice(0, limit)
+      .map((b) => ({
+        customerId: b.customerId,
+        name: b.name,
+        email: b.email ?? "",
+        phone: b.phone ?? null,
+        companyId: b.companyId,
+        companyName: b.companyName,
+        locations: b.locations.map((l) => ({ companyLocationId: l.id, name: l.name, shipTo: null })),
+      }));
   }
 
   async createDraftOrder(input: DraftOrderInput): Promise<DraftOrderResult> {

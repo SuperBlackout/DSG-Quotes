@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { ApiError } from "../errors";
 
 export type Decimal = Prisma.Decimal;
 export const D = (v: Prisma.Decimal.Value): Decimal => new Prisma.Decimal(v);
@@ -19,6 +20,24 @@ export function fmt(v: Decimal | number | string | null | undefined): string {
 
 export function fmtOrNull(v: Decimal | null | undefined): string | null {
   return v == null ? null : fmt(v);
+}
+
+/** Largest value a DECIMAL(12,2) column holds. Anything bigger would make Postgres raise "numeric field overflow" (a 500). */
+export const MAX_MONEY = D("9999999999.99");
+/** Largest magnitude of a DECIMAL(7,2) column (Quote.marginPct). */
+const MAX_PCT = D("99999.99");
+
+/** Throw 422 VALIDATION_FAILED when `v` cannot be stored in a DECIMAL(12,2) column. */
+export function assertFits(label: string, v: Decimal, field?: string): Decimal {
+  if (v.abs().gt(MAX_MONEY)) {
+    throw new ApiError("VALIDATION_FAILED", `${label} is too large (maximum ${MAX_MONEY.toFixed(2)})`, field ? { field } : undefined);
+  }
+  return v;
+}
+
+/** Clamp a margin percent into the range of Quote.marginPct (DECIMAL(7,2)). */
+export function clampPct(v: Decimal): Decimal {
+  return v.gt(MAX_PCT) ? MAX_PCT : v.lt(MAX_PCT.neg()) ? MAX_PCT.neg() : v;
 }
 
 export interface PricedLine {
@@ -64,4 +83,14 @@ export function computeTotals(lines: PricedLine[], freight: Decimal = ZERO): Tot
   const marginTotal = allCost ? subtotal.sub(cost) : null;
   const marginPct = marginTotal && subtotal.gt(0) ? Number(marginTotal.div(subtotal).mul(100).toDecimalPlaces(2).toString()) : null;
   return { subtotal, discountTotal: discount, freight, total: subtotal.add(freight), marginTotal, marginPct };
+}
+
+/** computeTotals that refuses (422) any figure that would not fit the database columns it is about to be written to. */
+export function checkedTotals(lines: PricedLine[], freight: Decimal = ZERO): Totals {
+  const t = computeTotals(lines, freight);
+  assertFits("Subtotal", t.subtotal, "lines");
+  assertFits("Discount total", t.discountTotal, "lines");
+  assertFits("Freight", t.freight, "freight");
+  assertFits("Total", t.total, "lines");
+  return t;
 }
