@@ -1,0 +1,105 @@
+# Render Blueprint for DSG Quotes. Apply via Dashboard > New > Blueprint (see docs/SETUP.md).
+# Secrets marked `sync: false` are prompted for on first apply and never stored in git.
+databases:
+  - name: dsg-quotes-db
+    plan: basic-256mb
+    region: ohio
+    databaseName: dsg_quotes
+    user: dsg_quotes
+    postgresMajorVersion: "16"
+    ipAllowList: []   # private network only; use Render shell / psql via dashboard for admin
+
+envVarGroups:
+  - name: dsg-quotes-shared
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: SHOPIFY_API_KEY
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      - key: SHOPIFY_APP_URL
+        sync: false          # https://quotes.dsg.direct (or the onrender.com URL until DNS is ready)
+      - key: SCOPES
+        value: read_customers,read_companies,read_products,read_inventory,read_orders,read_draft_orders,write_draft_orders
+      - key: SHOP_DOMAIN
+        sync: false          # dev store first, e.g. dsg-dev.myshopify.com
+      - key: APP_PUBLIC_URL
+        sync: false          # customer-facing base URL used in email/SMS links
+      - key: POSTMARK_SERVER_TOKEN
+        sync: false
+      - key: POSTMARK_INBOUND_TOKEN
+        sync: false
+      - key: EMAIL_FROM
+        value: quotes@dsg.direct
+      - key: EMAIL_REPLY_DOMAIN
+        value: reply.dsg.direct
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false
+      - key: ATTACHMENTS_BUCKET
+        sync: false
+      - key: ATTACHMENTS_S3_ENDPOINT
+        sync: false
+      - key: ATTACHMENTS_ACCESS_KEY_ID
+        sync: false
+      - key: ATTACHMENTS_SECRET_ACCESS_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
+services:
+  - type: web
+    name: dsg-quotes-web
+    runtime: node
+    region: ohio
+    plan: starter
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate && pnpm build
+    preDeployCommand: pnpm -F api prisma migrate deploy
+    startCommand: pnpm -F api start
+    healthCheckPath: /healthz
+    autoDeploy: false      # lead deploys at phase gates
+    envVars:
+      - fromGroup: dsg-quotes-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: dsg-quotes-db, property: connectionString }
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+
+  - type: worker
+    name: dsg-quotes-worker
+    runtime: node
+    region: ohio
+    plan: starter
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate && pnpm -F worker build
+    startCommand: pnpm -F worker start
+    autoDeploy: false
+    envVars:
+      - fromGroup: dsg-quotes-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: dsg-quotes-db, property: connectionString }
+      - key: NODE_ENV
+        value: production
+
+  - type: cron
+    name: dsg-quotes-cron
+    runtime: node
+    region: ohio
+    plan: starter
+    schedule: "0 * * * *"   # hourly: EXPIRE transitions. Daily 8:00 ET reminders/digest are gated inside the job by local time.
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate && pnpm -F worker build
+    startCommand: pnpm -F worker cron
+    envVars:
+      - fromGroup: dsg-quotes-shared
+      - key: DATABASE_URL
+        fromDatabase: { name: dsg-quotes-db, property: connectionString }
+      - key: NODE_ENV
+        value: production

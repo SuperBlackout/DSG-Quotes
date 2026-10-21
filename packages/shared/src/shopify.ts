@@ -9,14 +9,13 @@ export const ADMIN_API_VERSION = "2026-07" as const;
 
 export const ADMIN_GRAPHQL_PATH = `/admin/api/${ADMIN_API_VERSION}/graphql.json`;
 
-/** Admin API access scopes requested by the app (keep in sync with shopify.app.toml). */
+/** Admin API access scopes requested by the app (keep in sync with shopify.app.toml, render.yaml and .env.example; confirm names on shopify.dev). */
 export const APP_SCOPES = [
   "read_customers",
   "read_companies",
   "read_products",
   "read_inventory",
   "read_orders",
-  "write_draft_orders",
   "read_draft_orders",
-  "read_price_rules",
+  "write_draft_orders",
 ] as const;
