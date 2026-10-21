@@ -146,7 +146,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** QUOTE_READY to ACCEPTED (current version) */
+        /**
+         * QUOTE_READY to ACCEPTED (current version)
+         * @description 409 `VERSION_MISMATCH` (with `details.currentVersion`) means staff sent a newer version than the one the
+         *     customer saw: the client must reload the quote and let the customer re-review the new version before
+         *     accepting again. It is never retried automatically.
+         */
         post: operations["acceptCustomerQuote"];
         delete?: never;
         options?: never;
@@ -233,9 +238,32 @@ export interface paths {
         put?: never;
         /**
          * Accept to buy. Requires ACCEPTED and not expired (isPurchasable); creates or reuses the draft order.
-         * @description Idempotent. Returns 409 NOT_PURCHASABLE if the quote is not ACCEPTED or has expired.
+         * @description Idempotent. Returns 409 `NOT_PURCHASABLE` if the quote is not ACCEPTED or has expired. The client shows the
+         *     error `message` and offers "Ask for a new quote", which calls `POST /c/quotes/{id}/duplicate` (new DRAFT with
+         *     prices re-snapshotted) and opens the copy.
          */
         post: operations["checkoutCustomerQuote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/c/quotes/{id}/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Printable PDF of the latest sent version (customer-safe, no cost or margin)
+         * @description Returns 404 `NOT_FOUND` until at least one version has been sent (DRAFT quotes have no PDF). Add `?version=N` for an earlier sent version. Served with
+         *     `Content-Disposition: inline; filename="Q-#####-vN.pdf"`.
+         */
+        get: operations["getCustomerQuotePdf"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -558,6 +586,11 @@ export interface components {
              * @description Stable machine code. Used values: BAD_REQUEST, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND,
              *     INVALID_TRANSITION, NOT_PURCHASABLE, VERSION_MISMATCH, NOT_EDITABLE, FLOOR_APPROVAL_REQUIRED,
              *     VALIDATION_FAILED, RATE_LIMITED, INTERNAL.
+             *
+             *     Client handling: `NOT_PURCHASABLE` (409, checkout) means the quote is not ACCEPTED or has expired; show the
+             *     message and offer "Ask for a new quote" (duplicate). `VERSION_MISMATCH` (409, accept) means a newer version
+             *     was sent; reload and re-review the new version. `RATE_LIMITED` is reserved: rate limiting is deferred and
+             *     the API does not emit it yet.
              * @example INVALID_TRANSITION
              */
             code: string;
@@ -569,6 +602,12 @@ export interface components {
         };
         /** @example 1234.50 */
         Money: string;
+        /**
+         * @description ISO 4217 currency of every Money value on the same quote (summary, versions, lines, staff fields).
+         *     Money itself stays a plain decimal string; there is never a mix of currencies within one quote.
+         * @example USD
+         */
+        CurrencyCode: string;
         /** @enum {string} */
         QuoteStatus: "DRAFT" | "SUBMITTED" | "IN_REVIEW" | "QUOTE_READY" | "CHANGES_REQUESTED" | "ACCEPTED" | "ORDERED" | "EXPIRED" | "DECLINED" | "ARCHIVED";
         /** @enum {string} */
@@ -652,6 +691,8 @@ export interface components {
         /** @description Server-computed so front-ends never re-implement the state machine. */
         CustomerQuoteActions: {
             canEditLines: boolean;
+            /** @description Job, PO, needed-by, ship-to, notes and watchers may be changed via PATCH /c/quotes/{id} (DRAFT). */
+            canEditHeader: boolean;
             canSubmit: boolean;
             canWithdraw: boolean;
             canAccept: boolean;
@@ -674,10 +715,16 @@ export interface components {
             job?: components["schemas"]["JobRef"] | null;
             currentVersion?: number;
             lineCount: number;
+            currencyCode: components["schemas"]["CurrencyCode"];
             total: components["schemas"]["Money"];
+            /** @description Total of the sent version before the current one; null when only one version has been sent. */
+            previousTotal?: components["schemas"]["Money"] | null;
             /** Format: date-time */
             expiresAt?: string | null;
             ownerName?: string;
+            assignedRepName?: string | null;
+            /** @description Customer-visible messages (never internal notes) not yet read by this customer. */
+            unreadCount: number;
             orderId?: string | null;
             /** Format: date-time */
             updatedAt: string;
@@ -690,7 +737,6 @@ export interface components {
             shipTo?: components["schemas"]["Address"] | null;
             notesToSales?: string | null;
             watchers?: string[];
-            assignedRepName?: string | null;
             /** @description Customer's working draft lines when DRAFT, otherwise the latest sent version's lines. */
             lines: components["schemas"]["CustomerQuoteLine"][];
             /** @description Sent revisions only, ascending. */
@@ -798,10 +844,38 @@ export interface components {
             email: boolean;
             sms: boolean;
         };
+        /**
+         * @description Customer-facing notification keys (the full set). QUOTE_RECEIVED = we got your request (SUBMITTED),
+         *     QUOTE_READY = a version was sent, NEW_MESSAGE = staff message, EXPIRING = 3-day reminder,
+         *     ORDERED = order placed, ACCEPTED = acceptance confirmation, WEEKLY_SUMMARY = weekly digest of open quotes.
+         *     CHANGES_REQUESTED is staff-only and is not a customer preference.
+         * @enum {string}
+         */
+        NotificationEvent: "QUOTE_RECEIVED" | "QUOTE_READY" | "NEW_MESSAGE" | "EXPIRING" | "ORDERED" | "ACCEPTED" | "WEEKLY_SUMMARY";
+        /**
+         * @description The literal `all` (every quote) or a job id (`JobRef.id`) to follow only that job's quotes.
+         * @example all
+         */
+        WatcherScope: string;
+        Watcher: {
+            /** Format: email */
+            email: string;
+            name?: string | null;
+            /** @example Project manager */
+            role?: string | null;
+            scope: components["schemas"]["WatcherScope"];
+            channels: components["schemas"]["NotificationChannelPref"];
+        };
         NotificationPrefs: {
-            /** @description Keyed by event, e.g. QUOTE_READY, NEW_MESSAGE, ACCEPTED, ORDERED, EXPIRING, CHANGES_REQUESTED. */
+            /** @description One entry per NotificationEvent. PUT replaces all of them. */
             events: {
-                [key: string]: components["schemas"]["NotificationChannelPref"];
+                QUOTE_RECEIVED: components["schemas"]["NotificationChannelPref"];
+                QUOTE_READY: components["schemas"]["NotificationChannelPref"];
+                NEW_MESSAGE: components["schemas"]["NotificationChannelPref"];
+                EXPIRING: components["schemas"]["NotificationChannelPref"];
+                ORDERED: components["schemas"]["NotificationChannelPref"];
+                ACCEPTED: components["schemas"]["NotificationChannelPref"];
+                WEEKLY_SUMMARY: components["schemas"]["NotificationChannelPref"];
             };
             /** Format: email */
             email: string;
@@ -819,7 +893,8 @@ export interface components {
             quietEnd?: string | null;
             /** @example America/New_York */
             timezone?: string;
-            watchers?: string[];
+            /** @description People who also receive the selected channels, for all quotes or one job. */
+            watchers?: components["schemas"]["Watcher"][];
         };
         StaffQuoteLine: {
             id: string;
@@ -1412,6 +1487,32 @@ export interface operations {
                         invoiceUrl: string;
                         draftOrderId: string;
                     };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomerQuotePdf: {
+        parameters: {
+            query?: {
+                /** @description Sent version number; defaults to the current version. */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PDF document */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
                 };
             };
             default: components["responses"]["Error"];
