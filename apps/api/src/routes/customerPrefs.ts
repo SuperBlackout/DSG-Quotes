@@ -106,6 +106,11 @@ export async function registerPrefsRoutes(app: FastifyInstance, deps: AppDeps) {
       if (!body.smsConsentText?.trim()) throw new ApiError("VALIDATION_FAILED", "The consent text shown to the customer must be recorded", { field: "smsConsentText" });
     }
 
+    if (optIn && body.phone) {
+      const blocked = await deps.prisma.smsOptOut.findUnique({ where: { phone: body.phone } });
+      if (blocked) throw new ApiError("VALIDATION_FAILED", "This number opted out. Text START to our number first, then try again.", { field: "phone" });
+    }
+
     // A watcher's scope is "all" or one of THIS company's jobs; never another company's.
     const jobScopes = [...new Set((body.watchers ?? []).map((w) => w.scope).filter((x) => x !== "all"))];
     if (jobScopes.length) {
