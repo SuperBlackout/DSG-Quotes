@@ -85,7 +85,7 @@ async function handleOrderCreate(tx: Tx, deps: AppDeps, o: Json): Promise<string
   if (!quote) return "no_matching_quote";
   if (quote.status === "ORDERED") return quote.orderId === orderGid ? "already_ordered" : "already_ordered_other_order";
   if (quote.status !== "ACCEPTED") {
-    await writeEvent(tx, quote.id, "ORDER_IGNORED", "system", null, { orderId: orderGid, status: quote.status });
+    await writeEvent(tx, quote.id, "ORDER_IGNORED", "system", null, { orderId: orderGid, status: quote.status }, deps.now());
     return "ignored_status";
   }
   await applyTransition(tx, {

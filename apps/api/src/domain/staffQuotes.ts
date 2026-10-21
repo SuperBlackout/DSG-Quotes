@@ -120,7 +120,7 @@ export async function saveDraftRevision(
   if (input.repNote !== undefined) data.workingRepNote = input.repNote;
   if (input.internalNote !== undefined) data.workingInternalNote = input.internalNote;
   if (Object.keys(data).length) await tx.quote.update({ where: { id: quoteId }, data });
-  await writeEvent(tx, quoteId, "DRAFT_SAVED", "staff", null, { lineCount: input.lines.length, version: quote.currentVersion });
+  await writeEvent(tx, quoteId, "DRAFT_SAVED", "staff", null, { lineCount: input.lines.length, version: quote.currentVersion }, deps.now());
   await refreshDerived(tx, quoteId);
 }
 

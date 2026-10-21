@@ -22,10 +22,12 @@ export async function writeEvent(
   type: string,
   actor: Actor,
   actorId: string | null,
-  payload: Record<string, unknown> = {},
+  payload: Record<string, unknown>,
+  /** The app clock (deps.now()), so event time and every other timestamp share one clock. */
+  at: Date,
 ) {
   return tx.event.create({
-    data: { quoteId, type, actorType: actorType(actor), actorId, payload: payload as Prisma.InputJsonValue },
+    data: { quoteId, type, actorType: actorType(actor), actorId, payload: payload as Prisma.InputJsonValue, createdAt: at },
   });
 }
 
@@ -58,6 +60,6 @@ export async function applyTransition(tx: Tx, input: TransitionInput): Promise<{
     where: { id: input.quote.id },
     data: { ...(input.data ?? {}), status: to, statusChangedAt: input.now },
   });
-  await writeEvent(tx, input.quote.id, input.event, input.actor, input.actorId, { from, to, ...(input.payload ?? {}) });
+  await writeEvent(tx, input.quote.id, input.event, input.actor, input.actorId, { from, to, ...(input.payload ?? {}) }, input.now);
   return { from, to };
 }

@@ -225,7 +225,7 @@ export async function staffRoutes(app: FastifyInstance) {
         await applyTransition(tx, { quote, event: "CLAIM", actor: "staff", actorId: me.id, now: deps.now(), data: { assignedRep: { connect: { id: me.id } } } });
       } else if (["IN_REVIEW", "QUOTE_READY", "ACCEPTED"].includes(quote.status)) {
         await tx.quote.update({ where: { id }, data: { assignedRepId: me.id } });
-        await writeEvent(tx, id, "ASSIGN", "staff", me.id, { repId: me.id });
+        await writeEvent(tx, id, "ASSIGN", "staff", me.id, { repId: me.id }, deps.now());
       } else {
         throw new ApiError("INVALID_TRANSITION", `CLAIM is not allowed from ${quote.status}`, { status: quote.status });
       }
@@ -251,7 +251,7 @@ export async function staffRoutes(app: FastifyInstance) {
           ...(body.teamId !== undefined ? { teamId: body.teamId } : {}),
         },
       });
-      await writeEvent(tx, id, "ASSIGN", "staff", me.id, { repId: body.repId ?? null, teamId: body.teamId ?? null });
+      await writeEvent(tx, id, "ASSIGN", "staff", me.id, { repId: body.repId ?? null, teamId: body.teamId ?? null }, deps.now());
       await refreshDerived(tx, id);
     });
     return view(id, me);
@@ -308,7 +308,7 @@ export async function staffRoutes(app: FastifyInstance) {
       if (targets.length) {
         await tx.quoteLine.updateMany({ where: { id: { in: targets.map((l) => l.id) } }, data: { floorApproved: true, floorApprovedById: me.id } });
       }
-      await writeEvent(tx, id, "FLOOR_APPROVED", "staff", me.id, { lineIds: targets.map((l) => l.id), note: body.note ?? null });
+      await writeEvent(tx, id, "FLOOR_APPROVED", "staff", me.id, { lineIds: targets.map((l) => l.id), note: body.note ?? null }, deps.now());
       await refreshDerived(tx, id);
     });
     return view(id, me);
@@ -388,7 +388,7 @@ export async function staffRoutes(app: FastifyInstance) {
         },
       });
       // Internal notes NEVER emit an event, so the worker can't notify the customer about them (rule 5).
-      if (!body.internal) await writeEvent(tx, id, "NEW_MESSAGE", "staff", me.id, { messageId: m.id });
+      if (!body.internal) await writeEvent(tx, id, "NEW_MESSAGE", "staff", me.id, { messageId: m.id }, deps.now());
       await tx.quote.update({ where: { id }, data: { updatedAt: deps.now() } });
       return m;
     });

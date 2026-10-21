@@ -1,10 +1,10 @@
-import { BaseSequencer, type TestSpecification } from "vitest/node";
+import { BaseSequencer } from "vitest/node";
 import { defineConfig } from "vitest/config";
 
 /** Alphabetical file order so test/zz-route-coverage.test.ts always runs after every other file. */
 class AlphaSequencer extends BaseSequencer {
-  override async sort(files: TestSpecification[]) {
-    return [...files].sort((a, b) => a.moduleId.localeCompare(b.moduleId));
+  override async sort(files: Parameters<BaseSequencer["sort"]>[0]) {
+    return [...files].sort((a, b) => a[1].localeCompare(b[1]));
   }
 }
 

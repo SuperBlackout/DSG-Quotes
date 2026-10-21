@@ -97,7 +97,7 @@ export async function checkoutQuote(deps: AppDeps, buyer: BuyerContext, quoteId:
         draftOrderId: created.id,
         versionNo: version.versionNo,
         netTerms: !!buyer.paymentTermsTemplateId,
-      });
+      }, now);
       return { invoiceUrl, draftOrderId: created.id };
     },
     { timeout: 30_000, maxWait: 10_000 },

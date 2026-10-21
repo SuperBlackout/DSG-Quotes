@@ -175,7 +175,7 @@ export async function createDraft(
       createdByStaffId: input.createdByStaffId ?? null,
     },
   });
-  await writeEvent(tx, quote.id, "CREATE", input.actor, input.actorId, { number });
+  await writeEvent(tx, quote.id, "CREATE", input.actor, input.actorId, { number }, deps.now());
   return quote;
 }
 

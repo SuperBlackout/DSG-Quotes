@@ -248,7 +248,7 @@ export async function customerRoutes(app: FastifyInstance) {
         id = quote.id;
       }
       for (const l of body.cartLines) await addLine(tx, id, pricing.get(l.variantId)!, l.qty, { addedBy: "CUSTOMER" });
-      await writeEvent(tx, id, "FROM_CART", "customer", buyer.customerId, { lineCount: body.cartLines.length });
+      await writeEvent(tx, id, "FROM_CART", "customer", buyer.customerId, { lineCount: body.cartLines.length }, deps.now());
       await refreshDerived(tx, id);
       return id;
     });
@@ -288,7 +288,7 @@ export async function customerRoutes(app: FastifyInstance) {
         data.jobId = job?.id ?? null;
       }
       await tx.quote.update({ where: { id }, data });
-      await writeEvent(tx, id, "UPDATE_HEADER", "customer", buyer.customerId, { fields: Object.keys(body) });
+      await writeEvent(tx, id, "UPDATE_HEADER", "customer", buyer.customerId, { fields: Object.keys(body) }, deps.now());
       return loadCustomerView(tx, deps, id);
     });
   });
@@ -460,7 +460,7 @@ export async function customerRoutes(app: FastifyInstance) {
         const p = prices.get(l.variantId);
         if (p) await addLine(tx, copy.id, p, l.qty, { lineNote: l.lineNote, addedBy: "CUSTOMER" }); // discontinued variants are skipped
       }
-      await writeEvent(tx, copy.id, "DUPLICATED_FROM", "customer", buyer.customerId, { sourceQuoteId: id });
+      await writeEvent(tx, copy.id, "DUPLICATED_FROM", "customer", buyer.customerId, { sourceQuoteId: id }, deps.now());
       await setActiveQuote(tx, deps, buyer, copy.id);
       await refreshDerived(tx, copy.id);
       return loadCustomerView(tx, deps, copy.id);
@@ -510,7 +510,7 @@ export async function customerRoutes(app: FastifyInstance) {
           internal: false,
         },
       });
-      await writeEvent(tx, id, "NEW_MESSAGE", "customer", buyer.customerId, { messageId: m.id });
+      await writeEvent(tx, id, "NEW_MESSAGE", "customer", buyer.customerId, { messageId: m.id }, deps.now());
       await tx.quote.update({ where: { id }, data: { updatedAt: deps.now() } });
       return m;
     });
