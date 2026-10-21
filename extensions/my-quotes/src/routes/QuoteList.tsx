@@ -6,7 +6,7 @@ import { CHIPS, chipCounts, filterQuotes, groupQuotes, listSubtitle, type ChipId
 import { formatMoney, formatRelative } from "../lib/format";
 import { previousTotalText, quoteSubline, rowActions, unreadLabel, type RowAction } from "../lib/status";
 import { orderHref } from "../router";
-import { ErrorBanner, Loading, NavLink, StatusBadge, WIDE_900, errorMessage } from "../ui/common";
+import { ActionErrorBanner, ErrorBanner, Loading, NavLink, StatusBadge, WIDE_900 } from "../ui/common";
 import { valueOf } from "../ui/events";
 import { go, useAction, useAsync } from "../ui/hooks";
 import { NewQuoteModal } from "./NewQuoteModal";
@@ -34,12 +34,20 @@ export function QuoteList() {
   const [groupBy, setGroupBy] = useState<GroupBy>("job");
   const [deleting, setDeleting] = useState<CustomerQuoteSummary | undefined>(undefined);
   const [checkoutUrls, setCheckoutUrls] = useState<Record<string, string>>({});
+  // The quote whose "Buy now" just failed, so a NOT_PURCHASABLE error can offer "Ask for a new quote" for it.
+  const [failedBuy, setFailedBuy] = useState<CustomerQuoteSummary | undefined>(undefined);
   const action = useAction();
 
   const all = list.data ?? [];
   const counts = useMemo(() => chipCounts(all), [all]);
   const visible = useMemo(() => filterQuotes(all, chip, term), [all, chip, term]);
   const groups = useMemo(() => groupQuotes(visible, groupBy), [visible, groupBy]);
+
+  /** Copy a quote into a fresh draft (re-snapshotted prices) and open it. */
+  async function duplicate(q: CustomerQuoteSummary) {
+    const res = await action.run(`duplicate:${q.id}`, () => api().duplicateQuote(q.id));
+    if (res) go({ name: "detail", id: res.id });
+  }
 
   async function onAction(q: CustomerQuoteSummary, a: RowAction) {
     switch (a.id) {
@@ -53,8 +61,13 @@ export function QuoteList() {
       case "buy": {
         // The Navigation API cannot leave customer accounts, so the row swaps to a real link.
         const res = await action.run(`buy:${q.id}`, () => api().checkout(q.id));
-        if (res) setCheckoutUrls((m) => ({ ...m, [q.id]: res.invoiceUrl }));
-        else list.reload(); // the quote may have expired or changed: show its current state
+        if (res) {
+          setFailedBuy(undefined);
+          setCheckoutUrls((m) => ({ ...m, [q.id]: res.invoiceUrl }));
+        } else {
+          setFailedBuy(q);
+          list.reload(); // the quote may have expired or changed: show its current state
+        }
         return;
       }
       case "submit": {
@@ -62,11 +75,9 @@ export function QuoteList() {
         if (res) list.reload();
         return;
       }
-      case "duplicate": {
-        const res = await action.run(`duplicate:${q.id}`, () => api().duplicateQuote(q.id));
-        if (res) go({ name: "detail", id: res.id });
+      case "duplicate":
+        await duplicate(q);
         return;
-      }
       case "delete":
         // Opened by the button's commandFor; here we only remember which draft it is.
         setDeleting(q);
@@ -94,9 +105,12 @@ export function QuoteList() {
         <s-stack direction="block" gap="base">
           {list.error ? <ErrorBanner error={list.error} onRetry={list.reload} /> : null}
           {action.error ? (
-            <s-banner tone="critical" heading="That did not work" dismissible onDismiss={action.clearError}>
-              {errorMessage(action.error)}
-            </s-banner>
+            <ActionErrorBanner
+              error={action.error}
+              onDismiss={action.clearError}
+              onAskNewQuote={failedBuy ? () => void duplicate(failedBuy) : undefined}
+              askingNewQuote={failedBuy ? action.busy === `duplicate:${failedBuy.id}` : false}
+            />
           ) : null}
 
           <s-scroll-box>

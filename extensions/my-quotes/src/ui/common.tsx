@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import type { ApiError } from "../api/client";
 import type { CustomerQuoteSummary } from "../api/types";
+import { ASK_NEW_QUOTE_LABEL, isNetworkError, isNotPurchasableError } from "../lib/errors";
 import { statusBadgeTone, statusLabel } from "../lib/status";
 import { routeHref, type Route } from "../router";
 import { go } from "./hooks";
@@ -58,6 +59,45 @@ export function ErrorBanner({
           </s-stack>
         ) : null}
         {children}
+      </s-stack>
+    </s-banner>
+  );
+}
+
+/**
+ * Banner for a failed button press. Recoverable cases get their own next step:
+ * NOT_PURCHASABLE -> "Ask for a new quote" (duplicate), NETWORK -> check the connection and press again.
+ */
+export function ActionErrorBanner({
+  error,
+  onDismiss,
+  onAskNewQuote,
+  askingNewQuote,
+}: {
+  error: ApiError;
+  onDismiss: () => void;
+  /** Duplicate the quote and open the new draft. Omit where it makes no sense. */
+  onAskNewQuote?: () => void;
+  askingNewQuote?: boolean;
+}) {
+  const notPurchasable = isNotPurchasableError(error) && onAskNewQuote !== undefined;
+  return (
+    <s-banner
+      tone="critical"
+      heading={notPurchasable ? "This quote can no longer be purchased" : "That did not work"}
+      dismissible
+      onDismiss={onDismiss}
+    >
+      <s-stack direction="block" gap="small">
+        <s-text>{errorMessage(error)}</s-text>
+        {isNetworkError(error) ? <s-text color="subdued">Check your connection, then try again.</s-text> : null}
+        {notPurchasable ? (
+          <s-stack direction="inline">
+            <s-button variant="primary" loading={askingNewQuote} onClick={onAskNewQuote}>
+              {ASK_NEW_QUOTE_LABEL}
+            </s-button>
+          </s-stack>
+        ) : null}
       </s-stack>
     </s-banner>
   );
