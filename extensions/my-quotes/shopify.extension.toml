@@ -15,7 +15,10 @@ handle = "my-quotes"
 target = "customer-account.page.render"
 module = "./src/index.tsx"
 
-# The "My Quotes" account-menu entry is NOT configured here. Shopify has the merchant add a full-page
+# CA-12: the "My Quotes" account-menu entry cannot be declared here. A full-page extension does not add itself
+# to the menu (no toml key exists for it): the merchant adds it by hand, see docs/SETUP.md step 2 (Settings >
+# Checkout > Customize > Customer accounts > Menu). Until then the page is reachable only by direct link.
+# Original note: Shopify has the merchant add a full-page
 # extension to the customer account header menu in the checkout and accounts editor (see README.md).
 # Direct linking is left at its default (allowed) so the storefront can link to the page.
 

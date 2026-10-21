@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { SMS_CONSENT_TEXT, consentPayload } from "../src/lib/consent";
 import {
   EVENT_DEFS,
+  EVENT_KEYS,
+  describeWatcher,
+  emptyWatcher,
+  scopeOptions,
+  watcherToPut,
+  type WatcherForm,
   formFromPrefs,
   formatPhone,
   formatTime,
@@ -10,6 +16,7 @@ import {
   timeOptions,
   validatePrefs,
 } from "../src/lib/notifications";
+import type { NotificationPrefs } from "../src/api/types";
 import { prefs } from "./fixtures";
 
 describe("SMS consent text", () => {
@@ -49,21 +56,38 @@ describe("phone helpers", () => {
 });
 
 describe("form <-> prefs", () => {
-  it("maps the mockup rows and forces WEEKLY_SUMMARY to email only", () => {
-    expect(EVENT_DEFS.map((d) => d.key)).toEqual([
-      "QUOTE_READY",
-      "NEW_MESSAGE",
-      "QUOTE_RECEIVED",
-      "EXPIRING",
-      "ORDERED",
-      "WEEKLY_SUMMARY",
+  it("renders exactly the seven contract events with friendly labels", () => {
+    expect(EVENT_DEFS.map((d) => [d.key, d.title])).toEqual([
+      ["QUOTE_RECEIVED", "Quote received"],
+      ["QUOTE_READY", "Quote ready"],
+      ["NEW_MESSAGE", "New message"],
+      ["EXPIRING", "Expiring soon"],
+      ["ORDERED", "Ordered"],
+      ["ACCEPTED", "Accepted"],
+      ["WEEKLY_SUMMARY", "Weekly summary"],
     ]);
-    const f = formFromPrefs(prefs({ events: { WEEKLY_SUMMARY: { email: true, sms: true } } }));
+    expect([...EVENT_KEYS].sort()).toEqual(
+      ["ACCEPTED", "EXPIRING", "NEW_MESSAGE", "ORDERED", "QUOTE_READY", "QUOTE_RECEIVED", "WEEKLY_SUMMARY"],
+    );
+  });
+
+  it("forces WEEKLY_SUMMARY to email only", () => {
+    const p = prefs();
+    const f = formFromPrefs({ ...p, events: { ...p.events, WEEKLY_SUMMARY: { email: true, sms: true } } });
     expect(f.events.WEEKLY_SUMMARY).toEqual({ email: true, sms: false });
   });
 
-  it("fills missing events with everything off", () => {
-    expect(formFromPrefs(prefs({ events: {} })).events.QUOTE_READY).toEqual({ email: false, sms: false });
+  it("fills missing events (older server data) with everything off", () => {
+    const partial = { ...prefs(), events: {} } as unknown as NotificationPrefs;
+    expect(formFromPrefs(partial).events.QUOTE_READY).toEqual({ email: false, sms: false });
+  });
+
+  it("loads rich watchers", () => {
+    expect(formFromPrefs(prefs()).watchers).toEqual([
+      { email: "sam@example.com", name: "Sam Lee", role: "Project manager", scope: "all", channels: { email: true, sms: false } },
+    ]);
+    const bare = formFromPrefs(prefs({ watchers: [{ email: "a@b.co", scope: "job9", channels: { email: true, sms: true } }] }));
+    expect(bare.watchers[0]).toMatchObject({ name: "", role: "", scope: "job9" });
   });
 
   it("derives quiet hours switch from the stored times and defaults to 7 PM - 7 AM", () => {
@@ -94,7 +118,7 @@ describe("validatePrefs", () => {
 
   it("allows email-only settings without a phone or opt-in", () => {
     const f = base();
-    for (const k of Object.keys(f.events)) f.events[k] = { email: true, sms: false };
+    for (const k of EVENT_KEYS) f.events[k] = { email: true, sms: false };
     expect(validatePrefs({ ...f, smsOptIn: false, phone: "" })).toEqual({});
   });
 
@@ -103,9 +127,18 @@ describe("validatePrefs", () => {
     expect(validatePrefs({ ...base(), phone: "" }).phone).toBeDefined();
   });
 
-  it("rejects bad and duplicate watcher emails", () => {
-    expect(validatePrefs({ ...base(), watchers: ["x"] }).watchers).toBeDefined();
-    expect(validatePrefs({ ...base(), watchers: ["a@b.co", "A@B.co"] }).watchers).toMatch(/twice/);
+  const w = (over: Partial<WatcherForm> = {}): WatcherForm => ({ ...emptyWatcher(), email: "a@b.co", ...over });
+
+  it("rejects bad watcher emails and watchers with no channel", () => {
+    expect(validatePrefs({ ...base(), watchers: [w({ email: "x" })] }).watchers).toBeDefined();
+    expect(
+      validatePrefs({ ...base(), watchers: [w({ channels: { email: false, sms: false } })] }).watchers,
+    ).toMatch(/email or text/);
+  });
+
+  it("rejects the same person twice for the same scope but allows different scopes", () => {
+    expect(validatePrefs({ ...base(), watchers: [w(), w({ email: "A@B.co" })] }).watchers).toMatch(/twice/);
+    expect(validatePrefs({ ...base(), watchers: [w(), w({ scope: "job1" })] }).watchers).toBeUndefined();
   });
 });
 
@@ -144,17 +177,60 @@ describe("prefsToPut", () => {
   it("opt-out sends smsOptIn false without consent text", () => {
     const original = prefs();
     const f = formFromPrefs(original);
-    for (const k of Object.keys(f.events)) f.events[k] = { email: true, sms: false };
+    for (const k of EVENT_KEYS) f.events[k] = { email: true, sms: false };
     const body = prefsToPut(original, { ...f, smsOptIn: false });
     expect(body.smsOptIn).toBe(false);
     expect(body.smsConsentText).toBeUndefined();
   });
 
-  it("trims emails", () => {
+  it("trims emails and sends rich watchers, omitting empty name and role", () => {
     const original = prefs();
-    const body = prefsToPut(original, { ...formFromPrefs(original), email: " dana@example.com ", watchers: [" sam@example.com"] });
+    const watchers: WatcherForm[] = [
+      { email: " sam@example.com", name: " Sam Lee ", role: "", scope: "job1", channels: { email: true, sms: true } },
+    ];
+    const body = prefsToPut(original, { ...formFromPrefs(original), email: " dana@example.com ", watchers });
     expect(body.email).toBe("dana@example.com");
-    expect(body.watchers).toEqual(["sam@example.com"]);
+    expect(body.watchers).toEqual([
+      { email: "sam@example.com", name: "Sam Lee", scope: "job1", channels: { email: true, sms: true } },
+    ]);
+    expect("role" in body.watchers![0]!).toBe(false);
+  });
+
+  it("sends exactly the seven event keys, nothing else (PUT replaces all, unknown keys are rejected)", () => {
+    const original = { ...prefs(), events: { ...prefs().events, CHANGES_REQUESTED: { email: true, sms: true } } } as unknown as NotificationPrefs;
+    const body = prefsToPut(original, formFromPrefs(original));
+    expect(Object.keys(body.events).sort()).toEqual([...EVENT_KEYS].sort());
+  });
+
+  it("keeps a watcher's scope when its job is not in the loaded job list", () => {
+    const original = prefs({ watchers: [{ email: "a@b.co", scope: "job-gone", channels: { email: true, sms: false } }] });
+    const body = prefsToPut(original, formFromPrefs(original));
+    expect(body.watchers![0]!.scope).toBe("job-gone");
+  });
+});
+
+describe("watcher scope", () => {
+  it("offers All quotes first, then jobs, then unknown scopes already on a watcher", () => {
+    const f = formFromPrefs(prefs({ watchers: [{ email: "a@b.co", scope: "job-gone", channels: { email: true, sms: false } }] }));
+    const opts = scopeOptions([{ id: "job1", name: "Lakeview Clinic" }], f.watchers);
+    expect(opts).toEqual([
+      { value: "all", label: "All quotes" },
+      { value: "job1", label: "Job: Lakeview Clinic" },
+      { value: "job-gone", label: "A specific job" },
+    ]);
+  });
+
+  it("describes a watcher on one line", () => {
+    const opts = scopeOptions([{ id: "job1", name: "Lakeview Clinic" }], []);
+    const text = describeWatcher(
+      { email: "a@b.co", name: "", role: "Foreman", scope: "job1", channels: { email: true, sms: true } },
+      opts,
+    );
+    expect(text).toBe("Foreman · Job: Lakeview Clinic · Email + Text");
+  });
+
+  it("watcherToPut defaults an empty scope to all", () => {
+    expect(watcherToPut({ ...emptyWatcher(), email: "a@b.co", scope: "" }).scope).toBe("all");
   });
 });
 

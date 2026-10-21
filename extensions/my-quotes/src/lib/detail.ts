@@ -1,5 +1,5 @@
 // Screen 4 view model: which version is on screen, its totals, and the diff against the one before.
-import type { CustomerQuote, CustomerQuoteLine, CustomerQuoteVersion, Money, QuoteStatus } from "../api/types";
+import type { CustomerQuote, CustomerQuoteLine, CustomerQuoteVersion, Money } from "../api/types";
 import { diffVersions, previousVersion, type VersionDiff } from "./diff";
 import { formatShortDate, fromCents, sumCents } from "./format";
 
@@ -83,11 +83,3 @@ export function buildDetailView(q: CustomerQuote, selected?: number): DetailView
   return view;
 }
 
-/**
- * Header fields (job details) can be edited until the quote is closed. The API has no
- * `canEditHeader` flag yet, so this is the one place the UI decides; the server still answers
- * 409 NOT_EDITABLE if it disagrees. See report: contract change requested.
- */
-export function canEditJobDetails(status: QuoteStatus): boolean {
-  return status === "DRAFT" || status === "SUBMITTED" || status === "IN_REVIEW" || status === "QUOTE_READY" || status === "CHANGES_REQUESTED";
-}

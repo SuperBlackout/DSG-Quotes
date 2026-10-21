@@ -28,6 +28,12 @@ export class ApiError extends Error {
   }
 }
 
+export interface PdfFile {
+  blob: Blob;
+  /** From Content-Disposition, e.g. "Q-10482-v2.pdf". */
+  filename: string;
+}
+
 export interface ApiClientOptions {
   /** Origin that serves /c/*, no trailing slash. */
   baseUrl: string;
@@ -85,16 +91,20 @@ export function createApiClient(opts: ApiClientOptions) {
   const doFetch: typeof fetch = opts.fetch ?? ((...a) => fetch(...a));
   const base = opts.baseUrl.replace(/\/+$/, "");
 
-  async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
-    let res: Response;
+  /**
+   * One authenticated call. Any failure to get a response (offline, DNS, or a CORS rejection, which
+   * browsers surface as a bare TypeError because the extension runs with a null origin) becomes
+   * ApiError code NETWORK so the UI can show a retry state (CA-10).
+   */
+  async function send(method: Method, path: string, accept: string, body?: unknown): Promise<Response> {
     try {
       const token = await opts.getToken();
       const headers: Record<string, string> = {
-        Accept: "application/json",
+        Accept: accept,
         Authorization: `Bearer ${token}`,
       };
       if (body !== undefined) headers["Content-Type"] = "application/json";
-      res = await doFetch(`${base}${path}`, {
+      return await doFetch(`${base}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -102,6 +112,30 @@ export function createApiClient(opts: ApiClientOptions) {
     } catch (err) {
       throw new ApiError(0, "NETWORK", err instanceof Error ? err.message : "Network request failed");
     }
+  }
+
+  /** Turns a non-2xx response into the ApiError the API's `{code,message,details}` body describes. */
+  async function toApiError(res: Response): Promise<ApiError> {
+    let json: unknown;
+    try {
+      const text = await res.text();
+      json = text ? JSON.parse(text) : undefined;
+    } catch {
+      json = undefined;
+    }
+    const e = (json ?? {}) as Partial<{ code: string; message: string; details: Record<string, unknown> }>;
+    return new ApiError(
+      res.status,
+      e.code ?? (res.status === 401 ? "UNAUTHENTICATED" : "INTERNAL"),
+      e.message ?? `Request failed (${res.status})`,
+      e.details,
+    );
+  }
+
+  async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
+    const res = await send(method, path, "application/json", body);
+
+    if (!res.ok) throw await toApiError(res);
 
     const text = await res.text();
     let json: unknown;
@@ -112,17 +146,18 @@ export function createApiClient(opts: ApiClientOptions) {
         json = undefined;
       }
     }
-
-    if (!res.ok) {
-      const e = (json ?? {}) as Partial<{ code: string; message: string; details: Record<string, unknown> }>;
-      throw new ApiError(
-        res.status,
-        e.code ?? (res.status === 401 ? "UNAUTHENTICATED" : "INTERNAL"),
-        e.message ?? `Request failed (${res.status})`,
-        e.details,
-      );
-    }
     return assertCustomerSafe(json as T);
+  }
+
+  /** GET /c/quotes/{id}/pdf. The Authorization header is why this is a fetch and not a plain link. */
+  async function requestPdf(id: string, version?: number): Promise<PdfFile> {
+    const qs = version === undefined ? "" : `?version=${encodeURIComponent(String(version))}`;
+    const res = await send("GET", `${q(id)}/pdf${qs}`, "application/pdf");
+    if (!res.ok) throw await toApiError(res);
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const named = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)?.[1];
+    return { blob, filename: named ? decodeURIComponent(named) : "quote.pdf" };
   }
 
   const q = (id: string) => `/c/quotes/${encodeURIComponent(id)}`;
@@ -148,6 +183,8 @@ export function createApiClient(opts: ApiClientOptions) {
       request<CustomerQuote>("POST", `${q(id)}/decline`, reason ? { reason } : {}),
     reopenQuote: (id: string) => request<CustomerQuote>("POST", `${q(id)}/reopen`),
     duplicateQuote: (id: string) => request<CustomerQuote>("POST", `${q(id)}/duplicate`),
+    /** Customer-safe PDF of the latest sent version (or `version`). 404 NOT_FOUND until one is sent. */
+    downloadPdf: (id: string, version?: number) => requestPdf(id, version),
     /** Idempotent. 409 NOT_PURCHASABLE when the quote is not ACCEPTED or has expired. */
     checkout: (id: string) => request<CheckoutResult>("POST", `${q(id)}/checkout`),
 

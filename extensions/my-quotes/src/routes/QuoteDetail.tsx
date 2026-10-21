@@ -10,7 +10,7 @@ import { RequestChangesModal } from "../components/RequestChangesModal";
 import { StatusBannerView } from "../components/StatusBannerView";
 import type { BannerActionId } from "../lib/status";
 import { orderHref } from "../router";
-import { ErrorBanner, Loading, NavLink, StatusBadge, WIDE_900, errorMessage } from "../ui/common";
+import { ActionErrorBanner, ErrorBanner, Loading, NavLink, StatusBadge, WIDE_900 } from "../ui/common";
 import { go, useAction, useAsync } from "../ui/hooks";
 
 export function QuoteDetail({ id }: { id: string }) {
@@ -21,6 +21,25 @@ export function QuoteDetail({ id }: { id: string }) {
   const action = useAction();
 
   const q = quote.data;
+
+  // PDF: the endpoint needs the Authorization header, so it is fetched, never linked. The Navigation
+  // API cannot open files, so once fetched the button turns into a real link to the blob (same
+  // pattern as "Continue to checkout").
+  const [pdf, setPdf] = useState<{ key: string; url: string } | undefined>(undefined);
+  useEffect(() => {
+    const url = pdf?.url;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [pdf]);
+  const pdfKey = `${id}:${selected ?? "current"}`;
+  const hasSentVersion = (q?.versions.length ?? 0) > 0; // DRAFTs have no PDF (404)
+
+  async function downloadPdf() {
+    if (!q) return;
+    const file = await action.run("pdf", () => api().downloadPdf(q.id, selected));
+    if (file) setPdf({ key: pdfKey, url: URL.createObjectURL(file.blob) });
+  }
 
   // A newer version arrived (rep sent a revision): jump back to the live one.
   useEffect(() => setSelected(undefined), [q?.currentVersion]);
@@ -98,6 +117,17 @@ export function QuoteDetail({ id }: { id: string }) {
       <NavLink slot="breadcrumb-actions" route={{ name: "list" }}>
         My Quotes
       </NavLink>
+      {hasSentVersion ? (
+        pdf && pdf.key === pdfKey ? (
+          <s-button slot="secondary-actions" href={pdf.url} target="_blank">
+            Open PDF
+          </s-button>
+        ) : (
+          <s-button slot="secondary-actions" loading={action.busy === "pdf"} onClick={() => void downloadPdf()}>
+            Download PDF
+          </s-button>
+        )
+      ) : null}
       <s-button slot="secondary-actions" loading={action.busy === "duplicate"} onClick={() => void duplicate(q)}>
         Duplicate
       </s-button>
@@ -110,9 +140,12 @@ export function QuoteDetail({ id }: { id: string }) {
 
           {quote.error ? <ErrorBanner error={quote.error} onRetry={quote.reload} /> : null}
           {action.error ? (
-            <s-banner tone="critical" heading="That did not work" dismissible onDismiss={action.clearError}>
-              {errorMessage(action.error)}
-            </s-banner>
+            <ActionErrorBanner
+              error={action.error}
+              onDismiss={action.clearError}
+              onAskNewQuote={() => void onBannerAction("ask-new-quote")}
+              askingNewQuote={action.busy === "ask-new-quote"}
+            />
           ) : null}
 
           <StatusBannerView quote={q} busy={action.busy} continueUrl={continueUrl} onAction={(a) => void onBannerAction(a)} />
@@ -133,7 +166,15 @@ export function QuoteDetail({ id }: { id: string }) {
         </s-stack>
       </s-query-container>
 
-      <AcceptModal quote={q} onQuote={quote.set} onReload={quote.reload} />
+      <AcceptModal
+        quote={q}
+        onQuote={quote.set}
+        onReview={() => {
+          setSelected(undefined); // back to the live (new) version tab
+          setHighlight(true); // show what changed
+          quote.reload();
+        }}
+      />
       <RequestChangesModal quote={q} onQuote={quote.set} />
     </s-page>
   );

@@ -4,10 +4,17 @@
 // can't redirect to external URLs or the storefront" (Shopify docs), and the extension has no
 // window. So after /checkout succeeds the dialog turns into a success state whose primary button is a
 // real link (`href`) to the invoice/checkout URL. One extra click, no way around it.
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { api } from "../api/instance";
 import type { CustomerQuote } from "../api/types";
 import { currentVersionNo } from "../lib/detail";
+import {
+  ASK_NEW_QUOTE_LABEL,
+  REVIEW_NEW_VERSION_LABEL,
+  isNotPurchasableError,
+  isVersionMismatchError,
+  versionMismatchMessage,
+} from "../lib/errors";
 import { formatLongDate, formatMoney } from "../lib/format";
 import { errorMessage } from "../ui/common";
 import { go, useAction } from "../ui/hooks";
@@ -16,12 +23,12 @@ import { ACCEPT_MODAL_ID } from "./StatusBannerView";
 export function AcceptModal({
   quote,
   onQuote,
-  onReload,
+  onReview,
 }: {
   quote: CustomerQuote;
   /** Called with the quote returned by /accept so the page behind the dialog updates. */
   onQuote: (q: CustomerQuote) => void;
-  onReload: () => void;
+  onReview: () => void;
 }) {
   const action = useAction();
   const [url, setUrl] = useState<string | undefined>(undefined);
@@ -45,9 +52,20 @@ export function AcceptModal({
   }
 
   const err = action.error;
-  const stale = err?.code === "VERSION_MISMATCH";
-  const notPurchasable = err?.code === "NOT_PURCHASABLE";
+  const stale = isVersionMismatchError(err);
+  const notPurchasable = isNotPurchasableError(err);
   const working = action.busy === "accept" || action.busy === "checkout";
+
+  // Stale accept: reload the quote and jump to the new version tab straight away, so the page behind
+  // the dialog already shows what the customer must re-review.
+  useEffect(() => {
+    if (stale) onReview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [err]);
+
+  function review() {
+    action.clearError();
+  }
 
   return (
     <s-modal id={ACCEPT_MODAL_ID} heading={url ? "Quote accepted" : "Accept this quote?"}>
@@ -59,7 +77,7 @@ export function AcceptModal({
         ) : (
           <s-text>
             Accept {number}
-            {versionNo ? ` (version ${versionNo})` : ""} for {formatMoney(quote.total)}?
+            {versionNo ? ` (version ${versionNo})` : ""} for {formatMoney(quote.total, quote.currencyCode)}?
             {quote.expiresAt ? ` Prices are held until ${formatLongDate(quote.expiresAt)}.` : ""} You will go straight to
             checkout to place the order.
           </s-text>
@@ -67,18 +85,18 @@ export function AcceptModal({
         {err ? (
           <s-banner tone="critical" heading={stale ? "This quote changed" : "Could not complete"}>
             <s-stack direction="block" gap="small">
-              <s-text>{errorMessage(err)}</s-text>
+              <s-text>{stale ? versionMismatchMessage(err) : errorMessage(err)}</s-text>
               {stale ? (
                 <s-stack direction="inline">
-                  <s-button commandFor={ACCEPT_MODAL_ID} command="--hide" onClick={onReload}>
-                    Review the new version
+                  <s-button variant="primary" commandFor={ACCEPT_MODAL_ID} command="--hide" onClick={review}>
+                    {REVIEW_NEW_VERSION_LABEL}
                   </s-button>
                 </s-stack>
               ) : null}
               {notPurchasable ? (
                 <s-stack direction="inline">
                   <s-button loading={action.busy === "duplicate"} onClick={() => void askForNew()}>
-                    Ask for a new quote
+                    {ASK_NEW_QUOTE_LABEL}
                   </s-button>
                 </s-stack>
               ) : null}
