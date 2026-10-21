@@ -385,6 +385,11 @@ describe("customer quotes", () => {
       const q = await submitted(h);
       const bad = await h.c.post(`/c/quotes/${q.id}/messages`, { body: "see", attachments: [{ url: "https://evil.example/x.pdf", name: "x.pdf", size: 10, mime: "application/pdf" }] });
       expect(bad.status).toBe(422);
+      // A real upload URL for a DIFFERENT quote can't be attached here either.
+      const other = await submitted(h);
+      const up = await h.c.post(`/c/quotes/${other.id}/attachments/upload-url`, { name: "x.pdf", size: 1, mime: "application/pdf" });
+      const cross = await h.c.post(`/c/quotes/${q.id}/messages`, { body: "see", attachments: [{ url: up.body.fileUrl, name: "x.pdf", size: 1, mime: "application/pdf" }] });
+      expect(cross.status).toBe(422);
     });
 
     it("POST attachments/upload-url returns a signed upload target that is then accepted on a message", async () => {

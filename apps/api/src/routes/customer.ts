@@ -170,7 +170,7 @@ function requireDraft(status: string) {
 
 export async function customerRoutes(app: FastifyInstance) {
   const deps = app.deps;
-  app.addHook("preHandler", customerAuth(deps));
+  app.addHook("onRequest", customerAuth(deps)); // before body parsing: anonymous callers get 401, never 400
 
   // ---------------------------------------------------------------- list / create
   app.get("/quotes", async (req) => {
@@ -493,7 +493,7 @@ export async function customerRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const body = parse(postMessageBody, req.body);
     const attachments = asAttachments(body.attachments ?? []);
-    if (attachments.some((a) => !deps.attachments.isOwnUrl(a.url))) {
+    if (attachments.some((a) => !deps.attachments.isOwnUrl(a.url) || !a.url.includes(`/quotes/${id}/`))) {
       throw new ApiError("VALIDATION_FAILED", "Attachments must be uploaded through the upload URL endpoint", { field: "attachments" });
     }
     const msg = await deps.prisma.$transaction(async (tx) => {

@@ -80,7 +80,7 @@ const staffOf = (req: { staffPrincipal?: StaffPrincipal }) => req.staffPrincipal
 export async function staffRoutes(app: FastifyInstance) {
   const deps: AppDeps = app.deps;
   const shop = deps.config.shopDomain;
-  app.addHook("preHandler", staffAuth(deps));
+  app.addHook("onRequest", staffAuth(deps)); // before body parsing
 
   const view = (id: string, actor: StaffPrincipal["staff"]) => deps.prisma.$transaction((tx) => loadStaffView(tx, deps, id, actor));
 
@@ -371,7 +371,7 @@ export async function staffRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const body = parse(messageBody, req.body);
     const attachments = asAttachments(body.attachments ?? []);
-    if (attachments.some((a) => !deps.attachments.isOwnUrl(a.url))) {
+    if (attachments.some((a) => !deps.attachments.isOwnUrl(a.url) || !a.url.includes(`/quotes/${id}/`))) {
       throw new ApiError("VALIDATION_FAILED", "Attachments must be uploaded through the upload URL endpoint", { field: "attachments" });
     }
     const msg = await deps.prisma.$transaction(async (tx) => {

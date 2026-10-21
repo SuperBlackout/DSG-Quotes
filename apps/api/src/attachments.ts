@@ -13,7 +13,7 @@ export interface AttachmentSigner {
   isOwnUrl(url: string): boolean;
 }
 
-const sanitize = (name: string) => name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+/, "").slice(0, 120) || "file";
+const sanitize = (name: string) => name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/\.{2,}/g, ".").replace(/^\.+/, "").slice(0, 120) || "file";
 
 /** Deterministic fake for tests and local dev (no bucket needed). */
 export class FakeAttachmentSigner implements AttachmentSigner {

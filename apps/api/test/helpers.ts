@@ -10,6 +10,7 @@ import type { AppDeps } from "../src/context";
 import { createPrisma } from "../src/db";
 import { FakeShopify } from "../src/shopify/fake";
 import { HITS_FILE } from "./global-setup";
+import { hasOperation, validateResponse } from "./openapi";
 
 export const SECRET = "test-secret-not-real";
 export const API_KEY = "test-client-id";
@@ -100,6 +101,7 @@ export interface Res {
   status: number;
   body: any;
   text: string;
+  headers: Record<string, any>;
 }
 
 const TABLES = [
@@ -117,6 +119,7 @@ export function useHarness(): Harness {
     const shopify = seedFakeShopify();
     const deps: AppDeps = { config: testConfig(), prisma, shopify, attachments: new FakeAttachmentSigner(), now: () => new Date(clock.now) };
     const app = await buildApp(deps, {
+      exposeRoute: true,
       onResponse: (method, url, status) => appendFileSync(HITS_FILE, JSON.stringify({ method, url, status }) + "\n"),
     });
     await app.ready();
@@ -129,6 +132,12 @@ export function useHarness(): Harness {
         body = r.body ? JSON.parse(r.body) : undefined;
       } catch {
         body = undefined;
+      }
+      // Every response is checked against docs/openapi.yaml (unknown keys, missing required keys, types, enums).
+      const pattern = r.headers["x-route-pattern"];
+      if (typeof pattern === "string" && pattern && hasOperation(o.method, pattern)) {
+        const errs = validateResponse(o.method, pattern, r.statusCode, body);
+        if (errs.length) throw new Error(`Response of ${o.method} ${pattern} (${r.statusCode}) violates docs/openapi.yaml:\n  ${errs.slice(0, 8).join("\n  ")}`);
       }
       return { status: r.statusCode, body, text: r.body, headers: r.headers as Record<string, any> };
     };

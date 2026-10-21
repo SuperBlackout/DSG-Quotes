@@ -21,6 +21,8 @@ export interface BuildOptions {
   /** Test hooks: observe every registered route / every handled request (route-coverage test). */
   onRoute?: (method: string, url: string) => void;
   onResponse?: (method: string, routeUrl: string, status: number) => void;
+  /** Test only: add an `x-route-pattern` header so tests can validate bodies against docs/openapi.yaml. */
+  exposeRoute?: boolean;
 }
 
 export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<FastifyInstance> {
@@ -38,8 +40,22 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
     });
   }
 
+  // CORS for the customer-account extension, which calls /c/* cross-origin from Shopify's extension sandbox with
+  // a Bearer session token (no cookies, so a wildcard origin does not expose ambient credentials).
+  // Staff routes are same-origin from the embedded app and get no CORS headers.
+  const isCustomerPath = (url: string) => /^\/(proxy\/)?c\//.test(url);
+  app.addHook("onRequest", async (req, reply) => {
+    if (!isCustomerPath(req.raw.url ?? "")) return;
+    reply.header("access-control-allow-origin", "*");
+    reply.header("access-control-allow-headers", "authorization, content-type, x-company-location-id");
+    reply.header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    reply.header("access-control-max-age", "600");
+    if (req.method === "OPTIONS") return reply.status(204).send();
+  });
+
   app.addHook("onSend", async (_req, reply) => {
     reply.header("cache-control", "no-store");
+    if (opts.exposeRoute) reply.header("x-route-pattern", reply.request.routeOptions.url ?? "");
   });
 
   app.setErrorHandler((err, req, reply) => {
