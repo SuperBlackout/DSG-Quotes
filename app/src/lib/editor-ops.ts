@@ -67,8 +67,10 @@ export function addVariants(state: EditorState, picks: readonly PickedVariant[],
           imageUrl: p.imageUrl,
           qty: 1,
           listPriceCents: p.priceCents,
-          // Cost is unknown until the first save: the server snapshots it (CLAUDE.md rule 6) and returns it.
+          // No `id` yet: the server snapshots buyer list price and inventory cost on the first draft-revision save
+          // (CLAUDE.md rule 6) and returns them. The editor saves right after the picker adds lines.
           costCents: null,
+          costUnknown: false,
           quotedPriceCents: p.priceCents,
           lineNote: "",
           floorApproved: false,
