@@ -22,6 +22,13 @@ Applies the requests recorded by the four builders. Code follow-ups per folder: 
 ### Admin requests applied (contract 0.2.0)
 - `GET /s/me`; `GET /s/staff`, `PUT /s/staff/{id}`; `/s/teams` CRUD; `GET/PUT /s/settings`; `GET/PUT /s/saved-replies`; `POST /s/quotes/{id}/request-floor-approval`; inbox `rep=me|unassigned`, `Q-#####` search, `tabCounts`, `itemCount`; `GET /s/customers?q=`; `paymentTerms`, customer contact name/phone on `StaffQuote`; `POST /s/quotes/{id}/attachments/upload-url`; Send vN rule. Follow-ups ADM-1..14.
 
+### Worker, notifications, e2e (contract 0.2.0 follow-up)
+- api: contract 0.2.0 (staff roles/teams/settings/saved replies, routing, floor-approval request, PDF, CORS/auth split), four QA bug fixes with regression tests, NotificationLog and SmsOptOut tables; settings refuse SMS opt-in for a number that sent STOP.
+- worker: seven pref keys, role/team recipients, per-watcher scope/channels, Monday weekly summary, FLOOR_APPROVAL_REQUESTED to managers, send log in NotificationLog, STOP history in SmsOptOut.
+- e2e: fixtures adapted (roles, auth split, unknown-cost approval), known-bug tests flipped to normal, new staff-admin/customer/PDF flows. Run with its own `E2E_DATABASE_URL`.
+- Test counts: shared 431, api 268, worker 94, app 85, my-quotes 151 (+7 skipped), quote-blocks 29, e2e 163.
+- Unverified live: Shopify GraphQL docs added for customer/contact search, Postmark, Twilio, S3, PDF link in customer account, CORS from the null origin.
+
 ### Phase 1 Foundation (lead scaffold)
 - pnpm workspace (`packages/shared`, `apps/api`, `apps/worker`, `tests/e2e`, `app`, `extensions/*`), strict `tsconfig.base.json`.
 - `docs/openapi.yaml` v0.1.0: customer (`/c`) and staff (`/s`) routes, `{code,message}` errors, webhooks. Customer schemas contain no cost, margin or internal notes (enforced by `packages/shared/test/openapi-contract.test.ts`).
