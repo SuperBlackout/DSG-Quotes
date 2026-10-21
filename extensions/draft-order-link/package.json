@@ -1,0 +1,19 @@
+{
+  "name": "draft-order-link",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shopify/ui-extensions": "2026.7.4",
+    "preact": "^10.25.0"
+  },
+  "devDependencies": {
+    "@shopify/polaris-types": "1.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.0"
+  }
+}
