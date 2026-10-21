@@ -83,7 +83,7 @@ function newestFirst(a: CustomerQuoteSummary, b: CustomerQuoteSummary): number {
 
 function summarize(quotes: CustomerQuoteSummary[]): string {
   const total = quotes.reduce((acc, q) => acc + toCents(q.total), 0);
-  return `${plural(quotes.length, "quote")} · ${formatCents(total)}`;
+  return `${plural(quotes.length, "quote")} · ${formatCents(total, quotes[0]?.currencyCode)}`;
 }
 
 /** Groups are ordered by their most recently updated quote; quotes inside a group newest first. */

@@ -19,23 +19,40 @@ export function fromCents(cents: number): Money {
   return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
 }
 
-const USD = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+export const DEFAULT_CURRENCY = "USD";
+
+const formatters = new Map<string, Intl.NumberFormat>();
+
+/** Cached Intl formatter per ISO 4217 code; an unknown code falls back to USD instead of throwing. */
+function currencyFormatter(code: string | null | undefined): Intl.NumberFormat {
+  const key = (code || DEFAULT_CURRENCY).toUpperCase();
+  let f = formatters.get(key);
+  if (!f) {
+    try {
+      f = new Intl.NumberFormat("en-US", { style: "currency", currency: key });
+    } catch {
+      f = currencyFormatter(DEFAULT_CURRENCY);
+    }
+    formatters.set(key, f);
+  }
+  return f;
+}
 
 /**
- * "1234.5" -> "$1,234.50". The contract's Money type carries no currency code, so USD is assumed
- * (DSG sells in USD only). If multi-currency ever matters, Money needs a currency field.
+ * "1234.5" -> "$1,234.50". `currencyCode` is the quote's ISO 4217 code (`currencyCode` on every
+ * customer quote and summary); it defaults to USD only for callers that have no quote at hand.
  */
-export function formatMoney(m: Money | null | undefined): string {
+export function formatMoney(m: Money | null | undefined, currencyCode?: string | null): string {
   if (m === null || m === undefined || m === "") return "";
   try {
-    return USD.format(toCents(m) / 100);
+    return currencyFormatter(currencyCode).format(toCents(m) / 100);
   } catch {
     return m; // a malformed amount should show as-is, not take the whole page down
   }
 }
 
-export function formatCents(cents: number): string {
-  return USD.format(cents / 100);
+export function formatCents(cents: number, currencyCode?: string | null): string {
+  return currencyFormatter(currencyCode).format(cents / 100);
 }
 
 export function sumCents(values: Money[]): number {

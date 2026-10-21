@@ -44,6 +44,15 @@ MOCK_API_URL=http://localhost:4010 pnpm -F my-quotes test
 The "My Quotes" account menu item is added by the merchant, not in the toml: in the checkout and accounts editor
 (Settings > Checkout > Customize), add the My Quotes page to the customer account header menu.
 
+## Contract 0.2.0 behaviour (CONTRACT-FOLLOWUPS CA-1..13)
+
+- Money is formatted with the quote's `currencyCode`; list rows show the assigned rep, a "N new message(s)" badge from `unreadCount` and the struck-through `previousTotal`.
+- Job details editing follows `actions.canEditHeader` only.
+- Notification settings: exactly the seven events (Quote received, Quote ready, New message, Expiring soon, Ordered, Accepted, Weekly summary); watchers carry name, role, scope (all quotes or one job) and email/text channels. Quote-level `watchers` on `PATCH /c/quotes/{id}` stay plain emails.
+- "Download PDF" fetches `GET /c/quotes/{id}/pdf` with the Authorization header, then offers an "Open PDF" link to the blob (a plain link cannot send the header). Shown only once a version has been sent.
+- `NOT_PURCHASABLE` (checkout) offers "Ask for a new quote" (`POST /duplicate`, then opens the new draft). `VERSION_MISMATCH` (accept) reloads the quote, jumps to the new version with changes highlighted and asks for a fresh review.
+- Network or CORS failures show a retry state; responses containing staff-only keys are refused (`CONTRACT_VIOLATION`).
+
 ## Platform limits worth knowing
 
 - The Navigation API cannot leave customer accounts, so after `/checkout` the UI shows a "Continue to checkout" link

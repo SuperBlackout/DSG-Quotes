@@ -12,6 +12,7 @@ import type {
 
 export const NO_ACTIONS: CustomerQuoteActions = {
   canEditLines: false,
+  canEditHeader: false,
   canSubmit: false,
   canWithdraw: false,
   canAccept: false,
@@ -24,7 +25,7 @@ export const NO_ACTIONS: CustomerQuoteActions = {
 
 /** Actions as the API would return them per status (server-computed; fixtures only mimic them). */
 export const ACTIONS_BY_STATUS: Record<QuoteStatus, CustomerQuoteActions> = {
-  DRAFT: { ...NO_ACTIONS, canEditLines: true, canSubmit: true, canDelete: true },
+  DRAFT: { ...NO_ACTIONS, canEditLines: true, canEditHeader: true, canSubmit: true, canDelete: true },
   SUBMITTED: { ...NO_ACTIONS, canWithdraw: true, canDecline: true },
   IN_REVIEW: { ...NO_ACTIONS, canDecline: true },
   QUOTE_READY: { ...NO_ACTIONS, canAccept: true, canRequestChanges: true, canDecline: true },
@@ -59,6 +60,10 @@ export function summary(over: Partial<CustomerQuoteSummary> & { status: QuoteSta
     job: { id: "job1", name: "Lakeview Clinic", poNumber: "4471", siteAddress: "22 Lake Rd, Ronkonkoma NY" },
     currentVersion: 1,
     lineCount: 6,
+    currencyCode: "USD",
+    previousTotal: null,
+    assignedRepName: null,
+    unreadCount: 0,
     total: "3640.00",
     expiresAt: "2026-11-04T23:59:00.000Z",
     updatedAt: "2026-10-21T10:00:00.000Z",
@@ -134,7 +139,15 @@ export function prefs(over: Partial<NotificationPrefs> = {}): NotificationPrefs 
     quietStart: "19:00",
     quietEnd: "07:00",
     timezone: "America/New_York",
-    watchers: ["sam@example.com"],
+    watchers: [
+      {
+        email: "sam@example.com",
+        name: "Sam Lee",
+        role: "Project manager",
+        scope: "all",
+        channels: { email: true, sms: false },
+      },
+    ],
     ...over,
   };
 }

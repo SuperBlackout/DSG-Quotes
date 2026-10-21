@@ -2,7 +2,6 @@
 import { useRef, useState } from "preact/hooks";
 import { api } from "../api/instance";
 import type { CustomerQuote } from "../api/types";
-import { canEditJobDetails } from "../lib/detail";
 import { formatLongDate } from "../lib/format";
 import { buildJobUpdate, formatShipTo, jobFormFrom, validateJobForm, type JobForm } from "../lib/job-form";
 import { WIDE_700, errorMessage } from "../ui/common";
@@ -12,7 +11,7 @@ import { useAction } from "../ui/hooks";
 const MODAL_ID = "job-details-modal";
 
 export function JobDetails({ quote, onQuote }: { quote: CustomerQuote; onQuote: (q: CustomerQuote) => void }) {
-  const editable = canEditJobDetails(quote.status);
+  const editable = quote.actions.canEditHeader;
   const po = quote.poNumber ?? quote.job?.poNumber;
   const shipTo = formatShipTo(quote);
 

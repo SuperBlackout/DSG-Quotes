@@ -73,7 +73,7 @@ export function ItemsPanel({
 
         {view.lines.length === 0 ? <s-text color="subdued">No items on this quote yet.</s-text> : null}
         {view.lines.map((line) => (
-          <LineRow key={line.id} line={line} change={showDiff ? changeByLine.get(line.id) : undefined} />
+          <LineRow key={line.id} line={line} currency={quote.currencyCode} change={showDiff ? changeByLine.get(line.id) : undefined} />
         ))}
 
         {showDiff && view.diff.removed.length > 0 ? (
@@ -92,14 +92,15 @@ export function ItemsPanel({
         <s-divider />
         <s-grid gridTemplateColumns={`${WIDE_700} 1fr 20rem, 1fr`} gap="base" alignItems="start">
           <RepNotes quote={quote} view={view} />
-          <Totals view={view} showDiff={showDiff} />
+          <Totals view={view} showDiff={showDiff} currency={quote.currencyCode} />
         </s-grid>
       </s-stack>
     </s-section>
   );
 }
 
-function LineRow({ line, change }: { line: CustomerQuoteLine; change: LineChange | undefined }) {
+function LineRow({ line, change, currency }: { line: CustomerQuoteLine; change: LineChange | undefined; currency: string }) {
+  const money = (m: string | null | undefined) => formatMoney(m, currency);
   const added = change?.kind === "added";
   const changed = change?.kind === "changed";
   const discounted = toCents(line.quotedPrice) < toCents(line.listPrice);
@@ -117,7 +118,7 @@ function LineRow({ line, change }: { line: CustomerQuoteLine; change: LineChange
             {[
               line.sku,
               change?.qtyFrom !== undefined ? `qty ${change.qtyFrom} → ${line.qty}` : undefined,
-              change?.quotedPriceFrom !== undefined ? `was ${formatMoney(change.quotedPriceFrom)}` : undefined,
+              change?.quotedPriceFrom !== undefined ? `was ${money(change.quotedPriceFrom)}` : undefined,
               line.lineNote ? `"${line.lineNote}"` : undefined,
             ]
               .filter(Boolean)
@@ -130,17 +131,17 @@ function LineRow({ line, change }: { line: CustomerQuoteLine; change: LineChange
           {qtyText}
         </s-text>
         <s-text display={`${WIDE_700} auto, none`} type={discounted ? "redundant" : undefined}>
-          {formatMoney(line.listPrice)}
+          {money(line.listPrice)}
         </s-text>
         <s-text
           display={`${WIDE_700} auto, none`}
           type={discounted ? "strong" : undefined}
           tone={discounted ? "success" : "auto"}
         >
-          {formatMoney(line.quotedPrice)}
+          {money(line.quotedPrice)}
         </s-text>
         <s-text type="strong" display={`${WIDE_700} auto, none`}>
-          {formatMoney(line.lineTotal)}
+          {money(line.lineTotal)}
         </s-text>
       </s-grid>
 
@@ -148,12 +149,12 @@ function LineRow({ line, change }: { line: CustomerQuoteLine; change: LineChange
       <s-stack direction="inline" gap="small-200" display={`${WIDE_700} none, auto`}>
         <s-text tone={change?.qtyFrom !== undefined ? "warning" : "auto"}>Qty {qtyText}</s-text>
         <s-text color="subdued">·</s-text>
-        {discounted ? <s-text type="redundant">{formatMoney(line.listPrice)}</s-text> : null}
+        {discounted ? <s-text type="redundant">{money(line.listPrice)}</s-text> : null}
         <s-text tone={discounted ? "success" : "auto"} type={discounted ? "strong" : undefined}>
-          {formatMoney(line.quotedPrice)}
+          {money(line.quotedPrice)}
         </s-text>
         <s-text color="subdued">·</s-text>
-        <s-text type="strong">{formatMoney(line.lineTotal)}</s-text>
+        <s-text type="strong">{money(line.lineTotal)}</s-text>
       </s-stack>
     </s-stack>
   );
@@ -181,24 +182,25 @@ function RepNotes({ quote, view }: { quote: CustomerQuote; view: DetailView }) {
   );
 }
 
-function Totals({ view, showDiff }: { view: DetailView; showDiff: boolean }) {
+function Totals({ view, showDiff, currency }: { view: DetailView; showDiff: boolean; currency: string }) {
+  const money = (m: string | null | undefined) => formatMoney(m, currency);
   const saved = savingsCents(view.lines);
   const hasDiscount = view.discountTotal !== undefined && toCents(view.discountTotal) !== 0;
   const hasFreight = view.freight !== undefined;
   return (
     <s-stack direction="block" gap="small-200">
-      <TotalRow label="Subtotal" value={formatMoney(view.subtotal)} />
-      {hasDiscount ? <TotalRow label="Discount" value={`−${formatMoney(view.discountTotal)}`} /> : null}
-      {hasFreight ? <TotalRow label="Freight" value={formatMoney(view.freight)} /> : null}
-      {view.taxEstimate ? <TotalRow label="Estimated tax" value={formatMoney(view.taxEstimate)} /> : null}
+      <TotalRow label="Subtotal" value={money(view.subtotal)} />
+      {hasDiscount ? <TotalRow label="Discount" value={`−${money(view.discountTotal)}`} /> : null}
+      {hasFreight ? <TotalRow label="Freight" value={money(view.freight)} /> : null}
+      {view.taxEstimate ? <TotalRow label="Estimated tax" value={money(view.taxEstimate)} /> : null}
       <s-divider />
-      <TotalRow label="Total" value={formatMoney(view.total)} strong />
+      <TotalRow label="Total" value={money(view.total)} strong />
       {showDiff && view.diff.totalFrom ? (
         <s-text color="subdued" type="small">
-          Was {formatMoney(view.diff.totalFrom)} in v{view.comparedTo}
+          Was {money(view.diff.totalFrom)} in v{view.comparedTo}
         </s-text>
       ) : null}
-      {saved > 0 ? <s-text tone="success">You save {formatCents(saved)} vs your dealer price</s-text> : null}
+      {saved > 0 ? <s-text tone="success">You save {formatCents(saved, currency)} vs your dealer price</s-text> : null}
     </s-stack>
   );
 }

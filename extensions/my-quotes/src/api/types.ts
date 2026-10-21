@@ -24,6 +24,9 @@ export type UploadUrlRequest = Schemas["UploadUrlRequest"];
 export type UploadUrl = Schemas["UploadUrl"];
 export type NotificationPrefs = Schemas["NotificationPrefs"];
 export type NotificationChannelPref = Schemas["NotificationChannelPref"];
+export type NotificationEvent = Schemas["NotificationEvent"];
+export type Watcher = Schemas["Watcher"];
+export type CurrencyCode = Schemas["CurrencyCode"];
 export type ApiErrorBody = Schemas["Error"];
 
 export interface Page<T> {
