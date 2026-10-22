@@ -43,3 +43,4 @@ Applies the requests recorded by the four builders. Code follow-ups per folder: 
 - `docs/SETUP.md` manual steps; `docs/ISSUES.md` builder issues.
 - Open: gate "Render services up" and "Twilio A2P + email domain started" wait on `docs/SETUP.md` steps 4-6.
 - Staff may SEND_REVISION from DRAFT so rep-created quotes can be priced and sent (previously the editor was read-only).
+- Admin quote editor: Add product button moved inline (the section slot wasn't rendered).

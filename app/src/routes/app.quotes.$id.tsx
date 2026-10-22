@@ -387,9 +387,11 @@ function QuoteEditor({ data }: { data: EditorData }) {
 
       {/* ------------------------------------------------------------------ lines */}
       <s-section heading="Line items" padding="none" accessibilityLabel="Line items">
-        <s-button slot="primary-action" onClick={addProducts} disabled={readOnly || busy !== null}>
-          Add product
-        </s-button>
+        <s-box padding="base">
+          <s-button variant="primary" onClick={addProducts} disabled={readOnly || busy !== null}>
+            Add product
+          </s-button>
+        </s-box>
         <LinesTable
           lines={state.lines}
           floorPct={floorPct}
