@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Text field that keeps the user's raw text while typing and reports a value upward only when it parses.
@@ -25,7 +25,11 @@ export function CommitField({
   tone?: "critical";
 }) {
   const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
+  // While the user is typing, canonical reformatting ("2" -> "2.00") must not overwrite their text and jump the cursor.
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setDraft(value);
+  }, [value]);
   const valid = isValid(draft);
   return (
     <s-text-field
@@ -40,8 +44,12 @@ export function CommitField({
         setDraft(text);
         if (isValid(text)) onValid(text);
       }}
+      onFocus={() => {
+        focused.current = true;
+      }}
       onBlur={() => {
-        if (!isValid(draft)) setDraft(value);
+        focused.current = false;
+        setDraft(value);
       }}
       data-tone={tone}
     />
