@@ -25,7 +25,9 @@ export interface Recipient {
   cc?: string | null;
 }
 
-type Db = Pick<PrismaClient, "notificationPref" | "staff" | "customerProfile" | "smsOptOut" | "shopSetting">;
+type Db = Pick<PrismaClient, "notificationPref" | "staff" | "customerProfile" | "smsOptOut" | "shopSetting" | "quoteRecipient">;
+/** All the recipient resolvers need from the worker config (the API reuses them to show "who gets alerts"). */
+export type RecipientConfig = Pick<NotifyConfig, "shop" | "salesFallbackEmail">;
 
 /** Placeholder addresses (".invalid" is reserved and never deliverable) count as "no email". */
 export const usableEmail = (s: string | null | undefined): string | null => {
@@ -34,7 +36,7 @@ export const usableEmail = (s: string | null | undefined): string | null => {
 };
 
 /** The "copy all alerts to" address: the Settings value, else SALES_NOTIFY_EMAIL. */
-async function copyAddress(db: Db, config: NotifyConfig): Promise<string | null> {
+async function copyAddress(db: Db, config: RecipientConfig): Promise<string | null> {
   const row = await db.shopSetting.findUnique({ where: { shop: config.shop }, select: { copyAllAlertsTo: true } });
   return usableEmail(row?.copyAllAlertsTo) ?? usableEmail(config.salesFallbackEmail);
 }
@@ -81,13 +83,13 @@ function pickPref(rows: NotificationPref[], prefKey: string, fallbackPhone?: str
   return { emailOn, smsOn: row ? row.sms : false, phone, quiet };
 }
 
-export async function resolveRecipients(db: Db, config: NotifyConfig, quote: Quote, side: Side, plan: NotifyPlan, opts: { excludeStaffId?: string | null } = {}): Promise<Recipient[]> {
+export async function resolveRecipients(db: Db, config: RecipientConfig, quote: Quote, side: Side, plan: NotifyPlan, opts: { excludeStaffId?: string | null } = {}): Promise<Recipient[]> {
   if (side === "customer") return customerRecipients(db, config, quote, plan.customerPrefKey);
   if (side === "managers") return managerRecipients(db, config, plan, opts.excludeStaffId ?? null);
   return salesRecipients(db, config, quote, plan);
 }
 
-async function customerRecipients(db: Db, config: NotifyConfig, quote: Quote, prefKey: string | null): Promise<Recipient[]> {
+async function customerRecipients(db: Db, config: RecipientConfig, quote: Quote, prefKey: string | null): Promise<Recipient[]> {
   if (!prefKey) return []; // staff-bound events never reach the customer
   const shop = config.shop;
   const [rows, profile] = await Promise.all([
@@ -121,6 +123,21 @@ async function customerRecipients(db: Db, config: NotifyConfig, quote: Quote, pr
     seen.add(w.email);
     out.push({ kind: "watcher", key: w.email, name: w.name ?? w.email, email: w.email, emailOn: ownerWants && w.channels.email, phone: null, smsWithoutOptIn: ownerWants && w.channels.sms, quiet: null, replyRole: "c" });
   }
+  // People a rep added to this one quote. Emails follow the owner's event selection like watchers do; a text goes only to a number
+  // that confirmed (status ACTIVE after replying YES), and never to one in SmsOptOut.
+  const extras = await db.quoteRecipient.findMany({ where: { quoteId: quote.id, state: "ACTIVE" }, orderBy: { createdAt: "asc" } });
+  for (const x of extras) {
+    if (x.kind === "EMAIL") {
+      const email = extractEmail(x.address);
+      if (!email || seen.has(email)) continue;
+      seen.add(email);
+      out.push({ kind: "watcher", key: email, name: x.name ?? email, email, emailOn: true, phone: null, quiet: null, replyRole: "c" });
+    } else if (x.kind === "SMS") {
+      const phone = normalizePhone(x.address);
+      if (!phone) continue;
+      out.push({ kind: "watcher", key: `sms:${phone}`, name: x.name ?? phone, email: null, emailOn: false, phone, smsOptedOut: await isSmsOptedOut(db, phone), quiet: null, replyRole: "c" });
+    }
+  }
   return out;
 }
 
@@ -146,7 +163,7 @@ const fallbackFor = (copyTo: string | null): Recipient[] =>
  * Sales-side email routing. Everyone resolved gets the mail with the shop's copy address on CC. If nobody resolved, or a resolved
  * person has no usable email, the copy address receives it directly (as the only recipient for that gap).
  */
-async function withCopy(db: Db, config: NotifyConfig, out: Recipient[]): Promise<Recipient[]> {
+async function withCopy(db: Db, config: RecipientConfig, out: Recipient[]): Promise<Recipient[]> {
   const copyTo = await copyAddress(db, config);
   if (!copyTo) return out;
   const gap = out.length === 0 || out.some((r) => r.kind === "staff" && !r.email);
@@ -158,7 +175,7 @@ async function withCopy(db: Db, config: NotifyConfig, out: Recipient[]): Promise
 }
 
 /** Assigned rep, else the quote's team (TeamMember), else every manager/admin. Inactive staff are never notified. The copy address rides along on CC. */
-async function salesRecipients(db: Db, config: NotifyConfig, quote: Quote, plan: NotifyPlan): Promise<Recipient[]> {
+async function salesRecipients(db: Db, config: RecipientConfig, quote: Quote, plan: NotifyPlan): Promise<Recipient[]> {
   const shop = config.shop;
   let staff: Staff[] = [];
   if (quote.assignedRepId) staff = await db.staff.findMany({ where: { id: quote.assignedRepId, shop, active: true } });
@@ -168,7 +185,7 @@ async function salesRecipients(db: Db, config: NotifyConfig, quote: Quote, plan:
 }
 
 /** Active managers and admins (FLOOR_APPROVAL_REQUESTED). The requester is left out unless that would leave nobody. */
-async function managerRecipients(db: Db, config: NotifyConfig, plan: NotifyPlan, excludeStaffId: string | null): Promise<Recipient[]> {
+async function managerRecipients(db: Db, config: RecipientConfig, plan: NotifyPlan, excludeStaffId: string | null): Promise<Recipient[]> {
   const shop = config.shop;
   const all = await db.staff.findMany({ where: { shop, active: true, role: { in: [...SALES_ROLES] } }, orderBy: { name: "asc" } });
   const others = excludeStaffId ? all.filter((s) => s.id !== excludeStaffId) : all;

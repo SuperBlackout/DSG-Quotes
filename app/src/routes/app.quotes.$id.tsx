@@ -9,6 +9,7 @@ import { useLoaderData, useRouteError } from "react-router";
 import { ApiError, type Attachment, type SavedReply, type StaffMe, type StaffMember, type StaffMessage, type StaffQuote, type Team } from "../lib/api-client";
 import { uploadAttachment } from "../lib/attachments";
 import { getBrowserClients } from "../lib/browser-client";
+import { QuoteNotifications } from "../components/QuoteNotifications";
 import {
   STATUS_LABEL,
   contactSummary,
@@ -522,6 +523,11 @@ function QuoteEditor({ data }: { data: EditorData }) {
           manageRepliesHref="/app/settings#saved-replies"
           onSend={sendMessage}
         />
+      </s-section>
+
+      {/* ------------------------------------------------------------------ who gets alerts */}
+      <s-section heading="Notifications for this quote" accessibilityLabel="Notifications for this quote">
+        <QuoteNotifications quoteId={quote.id} refreshKey={quote.messages.length} />
       </s-section>
 
       {/* ------------------------------------------------------------------ danger zone */}

@@ -233,3 +233,30 @@ describe("registration", () => {
     await bare.close();
   });
 });
+
+describe("numbers a rep added to one quote", () => {
+  const EXTRA = "+15165550142";
+  const add = (quoteId: string, state: string) => ctx.prisma.quoteRecipient.create({ data: { quoteId, kind: "SMS", address: EXTRA, name: "Bo Buyer", state, addedByName: "Rita" } });
+
+  it("YES confirms the pending number; STOP then marks it stopped", async () => {
+    const quote = await mkQuote(ctx.prisma);
+    await add(quote.id, "PENDING");
+    const yes = await sms({ From: EXTRA, Body: "YES" });
+    expect(yes.body).toContain(`Q-${quote.number}`);
+    expect(await ctx.prisma.quoteRecipient.findFirstOrThrow({ where: { quoteId: quote.id } })).toMatchObject({ state: "ACTIVE" });
+    await sms({ From: EXTRA, Body: "STOP" });
+    expect(await ctx.prisma.quoteRecipient.findFirstOrThrow({ where: { quoteId: quote.id } })).toMatchObject({ state: "OPTED_OUT" });
+  });
+
+  it("a confirmed number's reply lands in the quote conversation under its name; an unconfirmed one is ignored", async () => {
+    const quote = await mkQuote(ctx.prisma);
+    await ctx.prisma.notificationLog.create({ data: { quoteId: quote.id, channel: "SMS", to: EXTRA, status: "SENT", providerId: "SM1" } });
+    await add(quote.id, "PENDING");
+    await sms({ From: EXTRA, Body: "Can you do 5% less?" });
+    expect(await ctx.prisma.message.count({ where: { quoteId: quote.id } })).toBe(0);
+    await ctx.prisma.quoteRecipient.updateMany({ where: { quoteId: quote.id }, data: { state: "ACTIVE" } });
+    await sms({ From: EXTRA, Body: "Can you do 5% less?" });
+    const m = await ctx.prisma.message.findFirstOrThrow({ where: { quoteId: quote.id } });
+    expect(m).toMatchObject({ authorType: "CUSTOMER", authorName: "Bo Buyer", body: "Can you do 5% less?", channel: "SMS" });
+  });
+});

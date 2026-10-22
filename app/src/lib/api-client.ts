@@ -114,6 +114,7 @@ export function createStaffClient(opts: ClientOptions) {
   }
 
   const q = (id: string) => `/s/quotes/${encodeURIComponent(id)}`;
+  const nr = (id: string, rid: string) => `${q(id)}/notification-recipients/${encodeURIComponent(rid)}`;
 
   return {
     listQuotes: (query: InboxQuery = {}) => request<InboxPage>("GET", `/s/quotes${buildQuery({ ...query })}`),
@@ -128,6 +129,11 @@ export function createStaffClient(opts: ClientOptions) {
       request<StaffQuote>("POST", `${q(id)}/approve-floor`, body),
     reopen: (id: string) => request<StaffQuote>("POST", `${q(id)}/reopen`),
     decline: (id: string, body: { reason?: string } = {}) => request<StaffQuote>("POST", `${q(id)}/decline`, body),
+    getNotifications: (id: string) => request<QuoteNotifications>("GET", `${q(id)}/notifications`),
+    addNotificationRecipient: (id: string, body: { kind: "EMAIL" | "SMS"; address: string; name?: string }) =>
+      request<QuoteExtraRecipient>("POST", `${q(id)}/notification-recipients`, body),
+    resendNotificationOptIn: (id: string, rid: string) => request<QuoteExtraRecipient>("POST", `${nr(id, rid)}/resend`),
+    removeNotificationRecipient: (id: string, rid: string) => request<void>("DELETE", nr(id, rid)),
     listMessages: (id: string, cursor?: string) =>
       request<{ items: StaffMessage[]; nextCursor: string | null }>("GET", `${q(id)}/messages${buildQuery({ cursor })}`),
     postMessage: (id: string, body: { body: string; internal?: boolean; attachments?: Attachment[]; channels?: { email: boolean; sms: boolean } }) =>
@@ -162,3 +168,21 @@ export function createStaffClient(opts: ClientOptions) {
 }
 
 export type StaffClient = ReturnType<typeof createStaffClient>;
+
+/** Who gets alerts for one quote (GET /s/quotes/{id}/notifications). */
+export interface QuoteExtraRecipient {
+  id: string;
+  kind: "EMAIL" | "SMS";
+  address: string;
+  name: string | null;
+  status: "ACTIVE" | "PENDING" | "OPTED_OUT";
+  addedBy: string | null;
+  addedAt: string;
+  confirmedAt: string | null;
+  requestSent: boolean;
+}
+export interface QuoteNotifications {
+  recipients: { group: "customer" | "team"; who: string; name: string; email: string | null; emailOn: boolean; cc: string | null; phone: string | null; texting: "on" | "off" | "stopped" }[];
+  extras: QuoteExtraRecipient[];
+  log: { at: string; channel: "EMAIL" | "SMS"; to: string; status: string }[];
+}

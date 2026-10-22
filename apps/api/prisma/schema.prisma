@@ -377,6 +377,25 @@ model NotificationLog {
   @@index([to, createdAt])
 }
 
+// Extra people a rep added to ONE quote's customer-facing alerts. SMS entries stay PENDING until that person replies YES to the
+// opt-in text (consent is theirs, never the rep's); STOP flips them to OPTED_OUT.
+model QuoteRecipient {
+  id                 String    @id @default(cuid())
+  quoteId            String
+  kind               String // EMAIL | SMS
+  address            String // email address, or E.164 phone number
+  name               String?
+  state              String    @default("ACTIVE") // ACTIVE | PENDING | OPTED_OUT
+  addedById          String?
+  addedByName        String?
+  optInRequestedAt   DateTime? // set by the worker once the opt-in text has gone out
+  optInAt            DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@unique([quoteId, kind, address])
+  @@index([kind, address])
+}
+
 // Numbers that replied STOP (or were opted out another way). Never text a number listed here.
 model SmsOptOut {
   phone  String   @id // E.164

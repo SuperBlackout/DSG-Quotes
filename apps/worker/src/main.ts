@@ -1,5 +1,6 @@
 import { buildProviders, consoleLogger, loadNotifyConfig, type WorkerDeps } from "./config";
 import { createPrisma } from "./db";
+import { sendOptInRequests } from "./optin";
 import { processBatch } from "./processor";
 
 /** `pnpm -F worker start`: Render background worker (dsg-quotes-worker). Polls the `events` table until SIGTERM. */
@@ -26,6 +27,7 @@ async function main() {
     try {
       const s = await processBatch(deps);
       busy = Object.entries(s.outcomes).some(([k, n]) => n > 0 && !["busy", "taken", "held", "error", "retry", "deferred_waiting"].includes(k));
+      if ((await sendOptInRequests(deps)) > 0) busy = true;
     } catch (e) {
       deps.log.error("poll failed", { error: (e as Error).message });
     }

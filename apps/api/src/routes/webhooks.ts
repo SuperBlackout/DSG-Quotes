@@ -134,6 +134,7 @@ async function handleCustomerRedact(tx: Tx, deps: AppDeps, p: Json): Promise<str
       data: { body: "[redacted]", authorName: null, attachments: [] },
     });
   }
+  if (ids.length) await tx.quoteRecipient.deleteMany({ where: { quoteId: { in: ids } } });
   await tx.notificationPref.deleteMany({ where: { shop, customerId } });
   await tx.customerProfile.deleteMany({ where: { shop, customerId } });
   await tx.activeQuote.deleteMany({ where: { shop, customerId } });
@@ -144,6 +145,7 @@ async function handleShopRedact(tx: Tx, deps: AppDeps): Promise<string> {
   const shop = deps.config.shopDomain;
   const ids = (await tx.quote.findMany({ where: { shop }, select: { id: true } })).map((q) => q.id);
   await tx.event.deleteMany({ where: { quoteId: { in: ids } } });
+  await tx.quoteRecipient.deleteMany({ where: { quoteId: { in: ids } } });
   await tx.message.deleteMany({ where: { quoteId: { in: ids } } });
   await tx.quoteLine.deleteMany({ where: { quoteId: { in: ids } } });
   await tx.quoteVersion.deleteMany({ where: { quoteId: { in: ids } } });

@@ -726,6 +726,86 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/StaffMessage" }
         default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/notifications:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+    get:
+      tags: [staff]
+      operationId: getStaffQuoteNotifications
+      summary: Who gets customer-facing alerts for this quote, extra recipients added for it, and its recent send log
+      security: [{ staffSession: [] }]
+      responses:
+        "200":
+          description: Recipients, extras and log
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recipients, extras, log]
+                properties:
+                  recipients: { type: array, items: { type: object, additionalProperties: true } }
+                  extras: { type: array, items: { $ref: "#/components/schemas/QuoteExtraRecipient" } }
+                  log: { type: array, items: { type: object, additionalProperties: true } }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/notification-recipients:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+    post:
+      tags: [staff]
+      operationId: addStaffQuoteRecipient
+      summary: Add an email, or a mobile number (needs the person to reply YES to a confirmation text), for this quote only
+      security: [{ staffSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, address]
+              properties:
+                kind: { type: string, enum: [EMAIL, SMS] }
+                address: { type: string }
+                name: { type: string }
+      responses:
+        "200":
+          description: Already on the quote (a pending number is re-sent its confirmation text)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuoteExtraRecipient" }
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuoteExtraRecipient" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/notification-recipients/{rid}:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+      - { name: rid, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [staff]
+      operationId: removeStaffQuoteRecipient
+      summary: Stop notifying this extra recipient about the quote
+      security: [{ staffSession: [] }]
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/notification-recipients/{rid}/resend:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+      - { name: rid, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [staff]
+      operationId: resendStaffQuoteRecipientOptIn
+      summary: Send the confirmation text again to a number still waiting for YES
+      security: [{ staffSession: [] }]
+      responses:
+        "200":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuoteExtraRecipient" }
+        default: { $ref: "#/components/responses/Error" }
   /s/quotes/{id}/request-floor-approval:
     post:
       tags: [staff]
@@ -1166,6 +1246,19 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/StaffQuote" }
   schemas:
+    QuoteExtraRecipient:
+      type: object
+      required: [id, kind, address, status, addedAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [EMAIL, SMS] }
+        address: { type: string }
+        name: { type: string, nullable: true }
+        status: { type: string, enum: [ACTIVE, PENDING, OPTED_OUT] }
+        addedBy: { type: string, nullable: true }
+        addedAt: { type: string, format: date-time }
+        confirmedAt: { type: string, format: date-time, nullable: true }
+        requestSent: { type: boolean }
     Error:
       type: object
       required: [code, message]

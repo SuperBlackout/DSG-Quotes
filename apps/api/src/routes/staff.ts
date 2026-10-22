@@ -20,6 +20,10 @@ import { applyTransition, lockQuote, writeEvent } from "../domain/transitions";
 import { ApiError, notFound } from "../errors";
 import { page, parse } from "../http";
 import { asAttachments } from "../serializers/customer";
+import { resolveRecipients } from "../../../worker/src/recipients";
+import type { NotifyPlan } from "../../../worker/src/rules";
+import { extractEmail } from "../../../worker/src/lib/reply-token";
+import { normalizePhone } from "../../../worker/src/lib/phone";
 import { staffMessage, staffSummary } from "../serializers/staff";
 import { registerAdminRoutes } from "./staffAdmin";
 
@@ -78,6 +82,12 @@ const messageBody = z.object({
   internal: z.boolean().default(false),
   /** Which alert channels to use for this customer message; omitted = both. The customer's own settings still apply. */
   channels: z.object({ email: z.boolean(), sms: z.boolean() }).optional(),
+});
+
+const recipientBody = z.object({
+  kind: z.enum(["EMAIL", "SMS"]),
+  address: z.string().trim().min(3).max(200),
+  name: z.string().trim().max(120).optional(),
 });
 
 const TABS = ["needs_response", "unassigned", "waiting_customer", "accepted", "expiring", "all"] as const;
@@ -459,6 +469,92 @@ export async function staffRoutes(app: FastifyInstance) {
       return m;
     });
     return reply.status(201).send(staffMessage(msg));
+  });
+
+
+  // ---------------------------------------------------------------- who gets alerts for this quote
+  const recipientView = (r: { id: string; kind: string; address: string; name: string | null; state: string; addedByName: string | null; createdAt: Date; optInAt: Date | null; optInRequestedAt: Date | null }) => ({
+    id: r.id,
+    kind: r.kind as "EMAIL" | "SMS",
+    address: r.address,
+    name: r.name,
+    status: r.state as "ACTIVE" | "PENDING" | "OPTED_OUT",
+    addedBy: r.addedByName,
+    addedAt: r.createdAt.toISOString(),
+    confirmedAt: r.optInAt ? r.optInAt.toISOString() : null,
+    requestSent: r.optInRequestedAt !== null,
+  });
+
+  app.get("/quotes/:id/notifications", async (req) => {
+    const { id } = req.params as { id: string };
+    const quote = await getStaffQuoteRow(deps.prisma, deps, id);
+    const cfg = { shop: deps.config.shopDomain, salesFallbackEmail: process.env.SALES_NOTIFY_EMAIL || null };
+    const plan: NotifyPlan = { template: "new_message", customerPrefKey: "NEW_MESSAGE", salesPrefKey: "NEW_MESSAGE", sides: ["customer", "sales"] };
+    const [customerSide, salesSide, extras, log] = await Promise.all([
+      resolveRecipients(deps.prisma, cfg, quote, "customer", plan),
+      resolveRecipients(deps.prisma, cfg, quote, "sales", plan),
+      deps.prisma.quoteRecipient.findMany({ where: { quoteId: id }, orderBy: { createdAt: "asc" } }),
+      deps.prisma.notificationLog.findMany({ where: { quoteId: id }, orderBy: { createdAt: "desc" }, take: 25 }),
+    ]);
+    const extraKeys = new Set(extras.map((x) => (x.kind === "EMAIL" ? x.address.toLowerCase() : `sms:${x.address}`)));
+    const row = (r: (typeof customerSide)[number], group: "customer" | "team") => ({
+      group,
+      who: r.kind === "customer" ? "Customer" : r.kind === "watcher" ? "Also notified" : r.key === "fallback" ? "Copy address" : "Sales rep",
+      name: r.name,
+      email: r.email,
+      emailOn: r.emailOn,
+      cc: r.cc ?? null,
+      phone: r.phone,
+      texting: r.phone ? (r.smsOptedOut ? "stopped" : "on") : "off",
+    });
+    return {
+      recipients: [
+        ...customerSide.filter((r) => !extraKeys.has(r.key)).map((r) => row(r, "customer")),
+        ...salesSide.map((r) => row(r, "team")),
+      ],
+      extras: extras.map(recipientView),
+      log: log.map((l) => ({ at: l.createdAt.toISOString(), channel: l.channel as "EMAIL" | "SMS", to: l.to, status: l.status })),
+    };
+  });
+
+  app.post("/quotes/:id/notification-recipients", async (req, reply) => {
+    const me = staffOf(req);
+    const { id } = req.params as { id: string };
+    const body = parse(recipientBody, req.body);
+    await getStaffQuoteRow(deps.prisma, deps, id);
+    const address = body.kind === "EMAIL" ? extractEmail(body.address)?.toLowerCase() ?? null : normalizePhone(body.address);
+    if (!address || (body.kind === "EMAIL" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address))) {
+      throw new ApiError("VALIDATION_FAILED", body.kind === "EMAIL" ? "Enter a valid email address" : "Enter a valid US mobile number", { field: "address" });
+    }
+    if (body.kind === "SMS" && (await deps.prisma.smsOptOut.findUnique({ where: { phone: address } }))) {
+      throw new ApiError("VALIDATION_FAILED", "This number replied STOP. They have to text START before they can be added.", { field: "address" });
+    }
+    const existing = await deps.prisma.quoteRecipient.findUnique({ where: { quoteId_kind_address: { quoteId: id, kind: body.kind, address } } });
+    if (existing) {
+      if (existing.state === "PENDING") await deps.prisma.quoteRecipient.update({ where: { id: existing.id }, data: { optInRequestedAt: null } });
+      return reply.status(200).send(recipientView(existing));
+    }
+    const created = await deps.prisma.quoteRecipient.create({
+      data: { quoteId: id, kind: body.kind, address, name: body.name || null, state: body.kind === "EMAIL" ? "ACTIVE" : "PENDING", addedById: me.id, addedByName: me.name, createdAt: deps.now() },
+    });
+    return reply.status(201).send(recipientView(created));
+  });
+
+  app.post("/quotes/:id/notification-recipients/:rid/resend", async (req) => {
+    const { id, rid } = req.params as { id: string; rid: string };
+    await getStaffQuoteRow(deps.prisma, deps, id);
+    const r = await deps.prisma.quoteRecipient.findFirst({ where: { id: rid, quoteId: id, kind: "SMS", state: "PENDING" } });
+    if (!r) throw notFound();
+    return recipientView(await deps.prisma.quoteRecipient.update({ where: { id: r.id }, data: { optInRequestedAt: null } }));
+  });
+
+  app.delete("/quotes/:id/notification-recipients/:rid", async (req, reply) => {
+    const { id, rid } = req.params as { id: string; rid: string };
+    await getStaffQuoteRow(deps.prisma, deps, id);
+    const r = await deps.prisma.quoteRecipient.findFirst({ where: { id: rid, quoteId: id } });
+    if (!r) throw notFound();
+    await deps.prisma.quoteRecipient.delete({ where: { id: r.id } });
+    return reply.status(204).send();
   });
 
   app.post("/quotes/:id/attachments/upload-url", async (req) => {

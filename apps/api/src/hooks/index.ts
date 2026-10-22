@@ -189,6 +189,13 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
         if (keyword === "START") {
           // An explicit START lifts the STOP record; consent on the preference rows stays cleared until the customer opts in again.
           await optInPhone(tx, from, { now });
+          // A number a rep added to a quote confirms here: YES switches on texts for the quote(s) that asked.
+          const confirmed = await tx.quoteRecipient.findMany({ where: { kind: "SMS", address: from, state: "PENDING" }, select: { id: true, quoteId: true } });
+          if (confirmed.length > 0) {
+            await tx.quoteRecipient.updateMany({ where: { id: { in: confirmed.map((c) => c.id) } }, data: { state: "ACTIVE", optInAt: now } });
+            const nums = await tx.quote.findMany({ where: { id: { in: confirmed.map((c) => c.quoteId) } }, select: { number: true }, orderBy: { number: "asc" } });
+            return { kind: "confirmed" as const, quotes: nums.map((n) => `Q-${n.number}`).join(", ") };
+          }
           return { kind: "start" as const };
         }
         if (!last) return { kind: "no_context" as const };
@@ -205,13 +212,16 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
         } else {
           // Re-check consent: the sender must hold this customer's opt-in for this number.
           const consent = await tx.notificationPref.count({ where: { shop, customerId: last.customerId, phone: from, smsOptInAt: { not: null } } });
-          if (consent === 0) return { kind: "no_context" as const };
-          await recordInboundMessage(tx, { quoteId: last.id, authorType: "CUSTOMER", authorId: last.customerId, authorName: last.customerName, body, channel: "SMS", now });
+          // Or a number a rep added to this quote that confirmed with YES: its reply joins the thread under the name on file.
+          const extra = consent === 0 ? await tx.quoteRecipient.findFirst({ where: { quoteId: last.id, kind: "SMS", address: from, state: "ACTIVE" } }) : null;
+          if (consent === 0 && !extra) return { kind: "no_context" as const };
+          await recordInboundMessage(tx, { quoteId: last.id, authorType: "CUSTOMER", authorId: last.customerId, authorName: extra ? (extra.name ?? from) : last.customerName, body, channel: "SMS", now });
         }
         return { kind: "posted" as const };
       });
 
       if (out.kind === "stop") return twiml(); // Twilio's Advanced Opt-Out sends the carrier-required confirmation itself
+      if (out.kind === "confirmed") return twiml(`DSG Distributors: you're confirmed for text updates on ${out.quotes}. Reply here to message our sales team. Reply STOP to opt out.`);
       if (out.kind === "start") return twiml("DSG Quotes: to turn text alerts back on, open My Quotes > Notification settings and confirm your number.");
       if (out.kind === "no_context") return twiml("DSG Quotes: we could not match your text to a quote. Please reply from My Quotes on dsg.direct.");
       return twiml();

@@ -63,6 +63,8 @@ export async function optOutPhone(tx: Tx, shop: string, phone: string, opts: { s
   await tx.smsOptOut.upsert({ where: { phone }, create: { phone, at, source }, update: { at, source } });
   await tx.notificationLog.create({ data: { quoteId: opts.quoteId ?? null, channel: "SMS", to: phone, status: "OPTED_OUT", providerId: null, createdAt: at } });
   const r = await tx.notificationPref.updateMany({ where: { shop, phone }, data: { sms: false, smsOptInAt: null } });
+  // Numbers a rep added to a single quote lose their place too (kept as OPTED_OUT so the rep can see why they stopped).
+  await tx.quoteRecipient.updateMany({ where: { kind: "SMS", address: phone, state: { not: "OPTED_OUT" } }, data: { state: "OPTED_OUT" } });
   // Staff whose texts go to Staff.phone (pref row carries no number of its own).
   const staff = await tx.staff.findMany({ where: { shop, phone }, select: { id: true } });
   let n = r.count;
