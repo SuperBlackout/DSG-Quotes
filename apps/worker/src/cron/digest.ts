@@ -1,6 +1,6 @@
 import type { Quote } from "@prisma/client";
 import type { WorkerDeps } from "../config";
-import { extractEmail } from "../lib/reply-token";
+import { usableEmail } from "../recipients";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const NEEDS_RESPONSE = ["SUBMITTED", "IN_REVIEW", "CHANGES_REQUESTED"];
@@ -36,7 +36,7 @@ export async function sendRepDigests(deps: WorkerDeps): Promise<{ sent: number; 
   let failed = 0;
 
   for (const s of staff) {
-    const to = extractEmail(s.email);
+    const to = usableEmail(s.email);
     if (!to || off.has(s.id)) continue;
     const mine = open.filter((q) => q.assignedRepId === s.id);
     const sections: Section[] = [

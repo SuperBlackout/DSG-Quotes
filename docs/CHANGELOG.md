@@ -54,3 +54,5 @@ Applies the requests recorded by the four builders. Code follow-ups per folder: 
 - Admin quote editor: Add product button moved inline (the section slot wasn't rendered).
 - Fix: customer-account session tokens (bare shop in dest, no iss) are now accepted; they were rejected as expired.
 - Cart block styling: fixed oversized inputs, page-width container, light card and a visible primary button.
+
+- Worker: daily rep digest skips staff with placeholder (`@users.invalid`) emails instead of failing the cron run.
