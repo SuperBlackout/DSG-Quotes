@@ -34,6 +34,8 @@ type Rule = { to: QuoteStatus; by: Actor[] };
 const RULES: Record<QuoteStatus, Partial<Record<QuoteEvent, Rule>>> = {
   DRAFT: {
     SUBMIT: { to: "SUBMITTED", by: ["customer", "staff"] },
+    // Rep-created quotes start as DRAFT with no customer submission; the rep prices and sends them directly.
+    SEND_REVISION: { to: "QUOTE_READY", by: ["staff"] },
     DELETE: { to: "ARCHIVED", by: ["customer"] },
   },
   SUBMITTED: {

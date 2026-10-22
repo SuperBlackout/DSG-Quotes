@@ -26,7 +26,7 @@ const ACTORS: Actor[] = ["customer", "staff", "system"];
 // Deliberately NOT derived from the implementation so the test is a real second source of truth.
 const C = "customer", S = "staff", Y = "system";
 const EXPECTED: Record<string, Record<string, [QuoteStatus, Actor[]]>> = {
-  DRAFT: { SUBMIT: ["SUBMITTED", [C, S]], DELETE: ["ARCHIVED", [C]] },
+  DRAFT: { SUBMIT: ["SUBMITTED", [C, S]], SEND_REVISION: ["QUOTE_READY", [S]], DELETE: ["ARCHIVED", [C]] },
   SUBMITTED: {
     WITHDRAW: ["DRAFT", [C]], CLAIM: ["IN_REVIEW", [S]],
     SEND_REVISION: ["QUOTE_READY", [S]], DECLINE: ["DECLINED", [C, S]],
