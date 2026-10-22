@@ -374,7 +374,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
             details={state.expiresOn ? undefined : "Blank uses the default expiry when sent"}
             value={state.expiresOn}
             disabled={readOnly}
-            onChange={(e) => setState((s) => ({ ...s, expiresOn: e.currentTarget.value }))}
+            onChange={(e) => { const v = e.currentTarget.value; setState((s) => ({ ...s, expiresOn: v })); }}
           />
         </s-grid>
         {quote.notesToSales ? (
@@ -496,7 +496,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
             rows={4}
             value={state.repNote}
             disabled={readOnly}
-            onInput={(e) => setState((s) => ({ ...s, repNote: e.currentTarget.value }))}
+            onInput={(e) => { const v = e.currentTarget.value; setState((s) => ({ ...s, repNote: v })); }}
           />
           <s-box padding="small" background="subdued" border="base" borderStyle="dashed" borderRadius="base">
             <s-badge tone="warning">Internal only</s-badge>
@@ -506,7 +506,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
               rows={4}
               value={state.internalNote}
               disabled={readOnly}
-              onInput={(e) => setState((s) => ({ ...s, internalNote: e.currentTarget.value }))}
+              onInput={(e) => { const v = e.currentTarget.value; setState((s) => ({ ...s, internalNote: v })); }}
             />
           </s-box>
         </s-grid>

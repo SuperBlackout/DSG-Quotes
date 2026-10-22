@@ -3,6 +3,7 @@
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
 ## 2026-10-22
+- Admin: fixed Settings crash ("reading value of null") by reading input values before state updaters run.
 - Admin editor: price/qty fields no longer reformat while typing (typing "2" no longer jumps to "2.00" with the cursor at the end).
 - Settings: "Copy all quote alerts to" address (ShopSetting.copyAllAlertsTo). Every staff alert is CC'd to it; when no recipient has a real email, it is sent to that address alone. Placeholder `@users.invalid` staff emails count as no email.
 - Reps can edit, price and send a DRAFT quote (DRAFT added to working statuses; staff working set is seeded from the customer's lines on first save).

@@ -203,7 +203,7 @@ function Settings({ data }: { data: SettingsData }) {
             value={cfg.notifications?.copyAllAlertsTo ?? ""}
             error={copyError ?? undefined}
             disabled={readOnly}
-            onInput={(e) => setCfg((c) => ({ ...c, notifications: { copyAllAlertsTo: e.currentTarget.value } }))}
+            onInput={(e) => { const v = e.currentTarget.value; setCfg((c) => ({ ...c, notifications: { copyAllAlertsTo: v } })); }}
           />
         </s-stack>
       </s-section>
@@ -214,7 +214,7 @@ function Settings({ data }: { data: SettingsData }) {
             label="Default team for new submissions"
             value={cfg.routing.defaultTeamId ?? ""}
             disabled={readOnly}
-            onChange={(e) => setCfg((c) => ({ ...c, routing: { ...c.routing, defaultTeamId: e.currentTarget.value || null } }))}
+            onChange={(e) => { const v = e.currentTarget.value; setCfg((c) => ({ ...c, routing: { ...c.routing, defaultTeamId: v || null } })); }}
           >
             <s-option value="">No default team</s-option>
             {teams.map((t) => (
@@ -267,15 +267,15 @@ function Settings({ data }: { data: SettingsData }) {
               details="gid://shopify/Company/..."
               value={newRule.companyId}
               disabled={readOnly}
-              onInput={(e) => setNewRule((r) => ({ ...r, companyId: e.currentTarget.value }))}
+              onInput={(e) => { const v = e.currentTarget.value; setNewRule((r) => ({ ...r, companyId: v })); }}
             />
             <s-text-field
               label="Company name (for this list)"
               value={newRule.companyName}
               disabled={readOnly}
-              onInput={(e) => setNewRule((r) => ({ ...r, companyName: e.currentTarget.value }))}
+              onInput={(e) => { const v = e.currentTarget.value; setNewRule((r) => ({ ...r, companyName: v })); }}
             />
-            <s-select label="Assign to" value={newRule.target} disabled={readOnly} onChange={(e) => setNewRule((r) => ({ ...r, target: e.currentTarget.value }))}>
+            <s-select label="Assign to" value={newRule.target} disabled={readOnly} onChange={(e) => { const v = e.currentTarget.value; setNewRule((r) => ({ ...r, target: v })); }}>
               <s-option value="">Choose…</s-option>
               {staff
                 .filter((m) => m.active)
@@ -343,7 +343,7 @@ function Settings({ data }: { data: SettingsData }) {
                   value={name}
                   disabled={readOnly}
                   details={`${t.memberIds.length} member${t.memberIds.length === 1 ? "" : "s"}${isDefault ? " · default team" : ""}`}
-                  onInput={(e) => setRenames((r) => ({ ...r, [t.id]: e.currentTarget.value }))}
+                  onInput={(e) => { const v = e.currentTarget.value; setRenames((r) => ({ ...r, [t.id]: v })); }}
                 />
                 <s-stack direction="inline" gap="small-300">
                   <s-button
@@ -405,8 +405,8 @@ function Settings({ data }: { data: SettingsData }) {
             </s-stack>
           ))}
           <s-divider />
-          <s-text-field label="Title" value={newReply.title} onInput={(e) => setNewReply((r) => ({ ...r, title: e.currentTarget.value }))} />
-          <s-text-area label="Reply text" rows={2} value={newReply.body} onInput={(e) => setNewReply((r) => ({ ...r, body: e.currentTarget.value }))} />
+          <s-text-field label="Title" value={newReply.title} onInput={(e) => { const v = e.currentTarget.value; setNewReply((r) => ({ ...r, title: v })); }} />
+          <s-text-area label="Reply text" rows={2} value={newReply.body} onInput={(e) => { const v = e.currentTarget.value; setNewReply((r) => ({ ...r, body: v })); }} />
           {perms.canManageSharedReplies ? (
             <s-switch
               label="Share with all staff"
