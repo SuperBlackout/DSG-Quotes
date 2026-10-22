@@ -69,3 +69,6 @@ shopify app init --template=reactRouter --name dsg-quotes   # TypeScript, link t
 - [ ] `pnpm install && pnpm test` passes on a clean clone.
 - [ ] `pnpm -F shared mock` serves the API on :4010 (send any `Authorization: Bearer mock` header; responses are random dynamic data, good enough to build UIs against).
 - [ ] Tell the lead; the lead then unblocks the builder agents that need live credentials.
+
+## 9. Account pages (statement + account info)
+Optional; independent of quotes. Follow `docs/ACCOUNT-PAGES.md` (Zoho read-only credentials, `dsg-quotes-zoho` env group, `pnpm -F api add-mapping`, extension network access and menu entries).

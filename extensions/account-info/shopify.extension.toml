@@ -1,0 +1,25 @@
+# Customer account full-page extension: "Account" (company details, locations, contacts, terms and credit limit).
+api_version = "2026-10"
+
+[[extensions]]
+type = "ui_extension"
+name = "Account info"
+handle = "account-info"
+
+# One full-page target per extension. Like My Quotes it does not add itself to the account menu: add it by hand
+# (Settings > Checkout > Customize > Customer accounts > Menu), see docs/ACCOUNT-PAGES.md.
+[[extensions.targeting]]
+target = "customer-account.page.render"
+module = "./src/index.jsx"
+
+[extensions.capabilities]
+# Calls the DSG Quotes API (/a/v1/*). The app must also be granted "Allow network access in checkout and account UI
+# extensions" in the Dev Dashboard.
+network_access = true
+
+[extensions.settings]
+[[extensions.settings.fields]]
+key = "api_base_url"
+type = "single_line_text_field"
+name = "Quotes API base URL"
+description = "Origin of the DSG Quotes API that serves /a/* (for example https://quotes.dsg.direct). No trailing slash."

@@ -186,6 +186,10 @@ export const DRAFT_ORDER_DELETE = /* GraphQL */ `
   }
 `;
 
+// Account pages (statement + account info). Defined next to the code that uses them (packages/identity); registered here so
+// `pnpm -F api graphql:validate` checks them with the rest. Field names were checked against the 2026-07 Admin schema.
+import { ACCOUNT_INFO_QUERY, RESOLVE_BUYER_QUERY } from "@dsg/identity";
+
 export const DOCUMENTS: Record<string, string> = {
   BUYER_BY_CUSTOMER,
   VARIANT_PRICING,
@@ -194,4 +198,6 @@ export const DOCUMENTS: Record<string, string> = {
   DRAFT_ORDER_CREATE,
   DRAFT_ORDER_COMPLETE,
   DRAFT_ORDER_DELETE,
+  ACCOUNT_RESOLVE_BUYER: RESOLVE_BUYER_QUERY,
+  ACCOUNT_INFO: ACCOUNT_INFO_QUERY,
 };

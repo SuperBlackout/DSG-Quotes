@@ -16,6 +16,7 @@ Plan, mockups and workflow: see `docs/PLAN.md`.
 | `app/` | admin | Embedded admin app (Shopify React Router template + Polaris web components): inbox, editor |
 | `extensions/quote-blocks/` | storefront | Theme app extension: Add to Quote, Move cart to quote, active-quote chip |
 | `extensions/my-quotes/` | customer-account | Customer account full-page extension (`customer-account.page.render`) |
+| `apps/api/src/statement/`, `packages/{contracts,zoho,statement,identity,testkit,account-client}/`, `extensions/account-statement/`, `extensions/account-info/` | account-pages | Customer-account Statement + Account info pages over Zoho Books (read-only). Routes under `/a`, outside `docs/openapi.yaml`. See `docs/ACCOUNT-PAGES.md` |
 | `tests/e2e/` | qa | Playwright end-to-end flows against the dev store, contract tests, fixtures |
 
 ## Stack
@@ -54,7 +55,8 @@ shopify app deploy          # ships extensions + app config (lead only, at phase
 7. **Validate every GraphQL operation** against the pinned schema before committing
    (`pnpm -F api graphql:validate`).
 8. No real customer data or production keys in code, tests or fixtures. Use the dev store.
-9. Code only against `packages/shared` types and `docs/openapi.yaml`. Need a contract change? Open a
+9. Account pages (`/a`): Zoho access is READ-ONLY (never add a Zoho write call or non-READ scope); a buyer is identified only by the verified session token -> company -> `account_map` (never accept a customer id from the client); every statement query is scoped by `zoho_customer_id`.
+10. Code only against `packages/shared` types and `docs/openapi.yaml`. Need a contract change? Open a
    PR touching only `docs/` / `packages/shared/` and tag the lead.
 
 ## Definition of done for every PR

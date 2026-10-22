@@ -90,6 +90,18 @@ importers:
 
   apps/api:
     dependencies:
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@dsg/identity':
+        specifier: workspace:*
+        version: link:../../packages/identity
+      '@dsg/statement':
+        specifier: workspace:*
+        version: link:../../packages/statement
+      '@dsg/zoho':
+        specifier: workspace:*
+        version: link:../../packages/zoho
       '@prisma/adapter-pg':
         specifier: ^6.19.3
         version: 6.19.3
@@ -115,6 +127,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@dsg/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
       '@types/node':
         specifier: ^20.19.43
         version: 20.19.43
@@ -136,6 +151,15 @@ importers:
 
   apps/worker:
     dependencies:
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@dsg/statement':
+        specifier: workspace:*
+        version: link:../../packages/statement
+      '@dsg/zoho':
+        specifier: workspace:*
+        version: link:../../packages/zoho
       '@prisma/adapter-pg':
         specifier: ^6.19.3
         version: 6.19.3
@@ -152,6 +176,9 @@ importers:
         specifier: ^4.23.15
         version: 4.23.15
     devDependencies:
+      '@dsg/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
       '@types/node':
         specifier: ^20.19.43
         version: 20.19.43
@@ -166,6 +193,62 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  extensions/account-info:
+    dependencies:
+      '@dsg/account-client':
+        specifier: workspace:*
+        version: link:../../packages/account-client
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@preact/signals':
+        specifier: ^2.0.0
+        version: 2.11.3(preact@10.29.8)
+      '@shopify/ui-extensions':
+        specifier: 2026.10.1
+        version: 2026.10.1(@preact/signals@2.11.3(preact@10.29.8))(preact@10.29.8)
+      preact:
+        specifier: ^10.26.0
+        version: 10.29.8
+    devDependencies:
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  extensions/account-statement:
+    dependencies:
+      '@dsg/account-client':
+        specifier: workspace:*
+        version: link:../../packages/account-client
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@preact/signals':
+        specifier: ^2.0.0
+        version: 2.11.3(preact@10.29.8)
+      '@shopify/ui-extensions':
+        specifier: 2026.10.1
+        version: 2026.10.1(@preact/signals@2.11.3(preact@10.29.8))(preact@10.29.8)
+      preact:
+        specifier: ^10.26.0
+        version: 10.29.8
+    devDependencies:
+      '@types/node':
+        specifier: ^20.14.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
         version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
 
   extensions/draft-order-link:
@@ -212,6 +295,63 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
 
+  packages/account-client:
+    dependencies:
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/contracts:
+    dependencies:
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/identity:
+    dependencies:
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@dsg/statement':
+        specifier: workspace:*
+        version: link:../statement
+      jose:
+        specifier: ^6.2.13
+        version: 6.2.13
+    devDependencies:
+      '@dsg/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
   packages/shared:
     devDependencies:
       '@redocly/cli':
@@ -235,6 +375,72 @@ importers:
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
+
+  packages/statement:
+    dependencies:
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@dsg/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/testkit:
+    dependencies:
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
+
+  packages/zoho:
+    dependencies:
+      '@dsg/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.43
+        version: 20.19.43
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
 
   tests/e2e:
     devDependencies:
@@ -2252,6 +2458,9 @@ packages:
 
   jose@5.10.0:
     resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
+
+  jose@6.2.13:
+    resolution: {integrity: sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==}
 
   js-levenshtein@1.1.6:
     resolution: {integrity: sha512-X2BB11YZtrRqY4EnQcLX5Rh373zbK4alC1FW7D7MBhL2gtcC17cTnr6DmfHZeS0s2rTHjUTMMHfG7gO8SSdw+g==}
@@ -5721,6 +5930,8 @@ snapshots:
   jiti@2.7.0: {}
 
   jose@5.10.0: {}
+
+  jose@6.2.13: {}
 
   js-levenshtein@1.1.6: {}
 
