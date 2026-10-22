@@ -4,6 +4,7 @@ import { loadConfig } from "./config";
 import { createPrisma } from "./db";
 import { ApiError } from "./errors";
 import { RealShopify } from "./shopify/real";
+import { statementDepsFromEnv } from "./statement/deps";
 
 /** `pnpm -F api start`: the production entrypoint (Render dsg-quotes-web). */
 async function main() {
@@ -12,14 +13,15 @@ async function main() {
   if (!databaseUrl) throw new Error("Missing required env var DATABASE_URL");
   const prisma = createPrisma(databaseUrl);
 
-  const shopify = new RealShopify({
-    shopDomain: config.shopDomain,
-    getAccessToken: async () => {
-      const s = await prisma.session.findFirst({ where: { shop: config.shopDomain, isOnline: false }, orderBy: { expires: "desc" } });
-      if (!s) throw new Error(`No offline Shopify session stored for ${config.shopDomain}; install the app first`);
-      return s.accessToken;
-    },
-  });
+  const getAccessToken = async () => {
+    const s = await prisma.session.findFirst({ where: { shop: config.shopDomain, isOnline: false }, orderBy: { expires: "desc" } });
+    if (!s) throw new Error(`No offline Shopify session stored for ${config.shopDomain}; install the app first`);
+    return s.accessToken;
+  };
+  const shopify = new RealShopify({ shopDomain: config.shopDomain, getAccessToken });
+  // Account pages: on only when the four ZOHO_* credentials are set.
+  const statement = statementDepsFromEnv(config, databaseUrl, getAccessToken) ?? undefined;
+  console.log(JSON.stringify({ msg: statement ? "account pages enabled (/a)" : "account pages disabled: ZOHO_* not set" }));
 
   const attachments: AttachmentSigner = config.attachments
     ? new S3AttachmentSigner(config.attachments)
@@ -30,9 +32,10 @@ async function main() {
         isOwnUrl: () => false,
       };
 
-  const app = await buildApp({ config, prisma, shopify, attachments, now: () => new Date() }, { logger: true });
+  const app = await buildApp({ config, prisma, shopify, attachments, statement, now: () => new Date() }, { logger: true });
   const close = async () => {
     await app.close();
+    await statement?.close?.();
     await prisma.$disconnect();
   };
   process.on("SIGTERM", () => void close().then(() => process.exit(0)));

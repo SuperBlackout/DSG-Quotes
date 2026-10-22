@@ -63,6 +63,29 @@ envVarGroups:
       - key: SENTRY_DSN
         sync: false
 
+  # Account pages (statement + account info), read-only Zoho Books. Used by web (API, webhook) and cron (nightly sync).
+  # Leave the four credentials empty to keep the pages off; set all four to turn them on. A partial set stops startup.
+  - name: dsg-quotes-zoho
+    envVars:
+      - key: ZOHO_CLIENT_ID
+        sync: false
+      - key: ZOHO_CLIENT_SECRET
+        sync: false
+      - key: ZOHO_REFRESH_TOKEN
+        sync: false          # Self Client grant with READ scopes only (docs/ACCOUNT-PAGES.md)
+      - key: ZOHO_ORG_ID
+        sync: false
+      - key: ZOHO_API_BASE
+        sync: false          # default https://www.zohoapis.com/books/v3; set for EU/IN data centres
+      - key: ZOHO_ACCOUNTS_BASE
+        sync: false          # default https://accounts.zoho.com
+      - key: ZOHO_CUSTOMER_NUMBER_FIELD
+        value: contact_number
+      - key: ZOHO_WEBHOOK_SECRET
+        sync: false          # HMAC secret for POST /webhooks/zoho; empty rejects every webhook (nightly sync still runs)
+      - key: STATEMENT_PUBLIC_BASE_URL
+        sync: false          # origin used in PDF download links; defaults to SHOPIFY_APP_URL
+
 services:
   - type: web
     name: dsg-quotes-web
@@ -77,6 +100,7 @@ services:
     autoDeploy: false      # lead deploys at phase gates
     envVars:
       - fromGroup: dsg-quotes-shared
+      - fromGroup: dsg-quotes-zoho
       - key: DATABASE_URL
         fromDatabase: { name: dsg-quotes-db, property: connectionString }
       - key: NODE_ENV
@@ -127,12 +151,13 @@ services:
     runtime: node
     region: ohio
     plan: starter
-    schedule: "0 * * * *"   # hourly: EXPIRE transitions. Daily 8:00 ET reminders/digest and the Monday weekly summary are gated inside the job by local time.
+    schedule: "0 * * * *"   # hourly: EXPIRE transitions. Daily 8:00 ET reminders/digest, the Monday weekly summary and the 3:00 ET statement sync are gated inside the job by local time.
     rootDir: .
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F api prisma generate
     startCommand: pnpm -F worker cron
     envVars:
       - fromGroup: dsg-quotes-shared
+      - fromGroup: dsg-quotes-zoho
       - key: DATABASE_URL
         fromDatabase: { name: dsg-quotes-db, property: connectionString }
       - key: NODE_ENV

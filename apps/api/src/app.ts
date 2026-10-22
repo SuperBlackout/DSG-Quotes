@@ -6,6 +6,7 @@ import { hookOptionsFromEnv, hookRoutes, hooksEnabled } from "./hooks";
 import { customerRoutes } from "./routes/customer";
 import { staffRoutes } from "./routes/staff";
 import { webhookRoutes } from "./routes/webhooks";
+import { statementRoutes, zohoWebhookRoutes } from "./statement/routes";
 
 /**
  * Fastify service (chosen over mounting inside the React Router app: the API has its own lifecycle, raw-body
@@ -16,6 +17,9 @@ import { webhookRoutes } from "./routes/webhooks";
  *   /proxy/c/*            the same routes through the Shopify app proxy (forwards /apps/quotes/* to <APP_URL>/proxy/*; HMAC signature)
  *   /s/*, /api/s/*        staff routes (embedded admin app; openapi server "/api")
  *   /webhooks/shopify     Shopify webhooks (HMAC verified)
+ *   /a/*                  account pages for the customer-account extensions (statement + account info; only when
+ *                         deps.statement is set, i.e. Zoho is configured). Own error shape, see statement/routes.ts.
+ *   /webhooks/zoho        Zoho change signal (HMAC verified), same condition
  *   /healthz              liveness + DB check
  */
 export interface BuildOptions {
@@ -47,7 +51,9 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   // sandboxed iframes and workers send) does not expose ambient credentials; Access-Control-Allow-Credentials is never sent.
   // Every /c/* path answers an OPTIONS preflight with 204 and no authentication. /s/*, /hooks/* and the app proxy mount
   // (/proxy/c/*, same-origin storefront) get no CORS headers.
-  const isDirectCustomerPath = (url: string) => /^\/c(\/|\?|$)/.test(url);
+  // The account pages (/a/v1/*) use the same credential model (Bearer session token, no cookies), so they get the same
+  // CORS treatment; /a/files/:token is a plain browser navigation and needs none.
+  const isDirectCustomerPath = (url: string) => /^\/(c|a\/v1)(\/|\?|$)/.test(url);
   app.addHook("onRequest", async (req, reply) => {
     if (!isDirectCustomerPath(req.raw.url ?? "")) return;
     const origin = req.headers.origin;
@@ -102,6 +108,10 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(staffRoutes, { prefix: "/s" });
   await app.register(staffRoutes, { prefix: "/api/s" });
   await app.register(webhookRoutes, { prefix: "/webhooks" });
+  if (deps.statement) {
+    await app.register(statementRoutes, { prefix: "/a", statement: deps.statement, now: deps.now });
+    await app.register(zohoWebhookRoutes, { prefix: "/webhooks", statement: deps.statement });
+  }
   if (hooksEnabled()) await app.register(hookRoutes, { prefix: "/hooks", ...hookOptionsFromEnv(deps.config.apiSecret) });
 
   return app;

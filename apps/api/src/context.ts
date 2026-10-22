@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient, StaffRole } from "@prisma/client";
 import type { Config } from "./config";
 import type { AttachmentSigner } from "./attachments";
 import type { BuyerContext, ShopifyGateway } from "./shopify/types";
+import type { StatementDeps } from "./statement/deps";
 
 /** Everything the app needs injected: tests pass a fake Shopify, fake secrets and a test database. */
 export interface AppDeps {
@@ -11,6 +12,8 @@ export interface AppDeps {
   attachments: AttachmentSigner;
   /** Clock, injectable for expiry tests. */
   now: () => Date;
+  /** Account pages (statement + account info). Absent unless Zoho is configured; the /a routes are then not mounted. */
+  statement?: StatementDeps;
 }
 
 export type Tx = Prisma.TransactionClient;

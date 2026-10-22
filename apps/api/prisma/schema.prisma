@@ -383,3 +383,85 @@ model SmsOptOut {
   at     DateTime @default(now())
   source String // e.g. twilio-stop, admin, customer-prefs
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Account pages (statement + account info), docs/ACCOUNT-PAGES.md. These tables are read and written with plain `pg`
+// by packages/statement (never through the Prisma client); they are declared here only so schema.prisma, the migration
+// and test/schema-sync.test.ts stay one description of the database. Model and field names equal the table and column
+// names (snake_case) on purpose, so no @map is needed. The `kind`/`source` CHECK constraints live in the migration SQL.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// Shopify company -> Zoho customer. The tenant boundary for every account page.
+model account_map {
+  shopify_company_id String   @id
+  zoho_customer_id   String   @unique
+  customer_number    String   @unique
+  display_name       String
+  active             Boolean  @default(true)
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// Cached Zoho contact (balances, terms, credit limit).
+model zoho_contact {
+  zoho_customer_id       String   @id
+  customer_number        String
+  name                   String
+  currency_code          String   @default("USD")
+  payment_terms_label    String?
+  credit_limit           Decimal? @db.Decimal(14, 2)
+  outstanding_receivable Decimal  @default(0) @db.Decimal(14, 2)
+  unused_credits         Decimal  @default(0) @db.Decimal(14, 2)
+  raw                    Json     @default("{}")
+  synced_at              DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// Cached Zoho invoices, payments, credit notes and sales orders.
+model zoho_document {
+  id               String    @id
+  zoho_customer_id String
+  kind             String
+  number           String
+  doc_date         DateTime  @db.Date
+  due_date         DateTime? @db.Date
+  status           String
+  total            Decimal   @db.Decimal(14, 2)
+  balance          Decimal   @default(0) @db.Decimal(14, 2)
+  currency_code    String    @default("USD")
+  reference        String?
+  source           String    @default("zoho")
+  raw              Json      @default("{}")
+  synced_at        DateTime  @default(now()) @db.Timestamptz(6)
+
+  // The migration creates this index with doc_date DESC; the sort order is left out here only because test/schema-sync.test.ts
+  // derives the index name from the column list.
+  @@index([zoho_customer_id, doc_date])
+}
+
+/// Single-use PDF download capabilities (token stored as a hash).
+model pdf_link {
+  token_hash       String    @id
+  zoho_customer_id String
+  doc_kind         String
+  doc_id           String?
+  expires_at       DateTime  @db.Timestamptz(6)
+  used_at          DateTime? @db.Timestamptz(6)
+}
+
+/// One row per sync run per customer (status, counts, timing; never credentials).
+model sync_event {
+  id               BigInt   @id @default(autoincrement())
+  zoho_customer_id String?
+  kind             String
+  detail           Json     @default("{}")
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// Who touched which account page and with what outcome (ok, denied, rate_limited, not_found, not_synced).
+model access_audit {
+  id                 BigInt   @id @default(autoincrement())
+  shopify_company_id String?
+  zoho_customer_id   String?
+  action             String
+  outcome            String
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+}

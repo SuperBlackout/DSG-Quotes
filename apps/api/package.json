@@ -10,9 +10,14 @@
     "test": "vitest run",
     "prisma": "prisma",
     "db:seed": "tsx prisma/seed.ts",
-    "graphql:validate": "tsx scripts/graphql-validate.ts"
+    "graphql:validate": "tsx scripts/graphql-validate.ts",
+    "add-mapping": "tsx src/cli/addMapping.ts"
   },
   "dependencies": {
+    "@dsg/contracts": "workspace:*",
+    "@dsg/identity": "workspace:*",
+    "@dsg/statement": "workspace:*",
+    "@dsg/zoho": "workspace:*",
     "@prisma/adapter-pg": "^6.19.3",
     "@prisma/client": "^6.19.3",
     "fastify": "^5.12.7",
@@ -23,6 +28,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@dsg/testkit": "workspace:*",
     "@types/node": "^20.19.43",
     "@types/pg": "^8.23.1",
     "prisma": "^6.19.3",

@@ -2,6 +2,9 @@
 
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
+## 2026-10-23
+- Account pages: **Account statement** and **Account info** customer-account extensions moved into this app from the standalone `dsg-account` app (Zoho Books read-only cache, session-token identity, single-use PDF links), served by `dsg-quotes-web` under `/a` and `POST /webhooks/zoho`, nightly sync in `dsg-quotes-cron`. Off until the four `ZOHO_*` credentials are set. New packages `contracts`, `zoho`, `statement`, `identity`, `testkit`, `account-client`; migration `20261023000000_statement_tables`; `pnpm -F api add-mapping`. See `docs/ACCOUNT-PAGES.md`.
+
 ## 2026-10-22
 - Storefront: "Add to Quote" buttons now feed the real quote module; /pages/quote is a themed list + quote detail (theme-overrides/). Built in a review copy of the theme, not yet published.
 - Worker/cron: `EMAIL_LOG_ONLY=1` lets production start with emails printed to the log (no Postmark yet). Without it a missing token is still fatal.
