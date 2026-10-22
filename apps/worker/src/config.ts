@@ -84,9 +84,9 @@ export function loadNotifyConfig(env: NodeJS.ProcessEnv = process.env): NotifyCo
 export function buildProviders(env: NodeJS.ProcessEnv = process.env, log: Logger = consoleLogger): { email: EmailProvider; sms: SmsProvider | null } {
   let email: EmailProvider;
   if (env.POSTMARK_SERVER_TOKEN) email = new PostmarkEmailProvider(env.POSTMARK_SERVER_TOKEN);
-  else if (env.NODE_ENV === "production") throw new Error("Missing required env var POSTMARK_SERVER_TOKEN");
+  else if (env.NODE_ENV === "production" && env.EMAIL_LOG_ONLY !== "1") throw new Error("Missing required env var POSTMARK_SERVER_TOKEN (or set EMAIL_LOG_ONLY=1 to print emails instead of sending)");
   else {
-    log.warn("POSTMARK_SERVER_TOKEN not set: emails are printed, not sent");
+    log.warn("POSTMARK_SERVER_TOKEN not set: emails are printed to the log, NOT sent");
     email = new ConsoleEmailProvider();
   }
 
