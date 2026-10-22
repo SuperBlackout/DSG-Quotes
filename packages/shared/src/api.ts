@@ -1260,6 +1260,11 @@ export interface components {
                 autoAssignByCompany: boolean;
                 rules: components["schemas"]["RoutingRule"][];
             };
+            /** @description Optional on PUT (omitted = unchanged). Always present on GET. */
+            notifications?: {
+                /** @description Every quote alert to sales is copied to this address. It is also the only recipient when the assigned rep, team or managers have no usable email. Null = off. */
+                copyAllAlertsTo?: string | null;
+            };
         };
         SavedReply: {
             id: string;

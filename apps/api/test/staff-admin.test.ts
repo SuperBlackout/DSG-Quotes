@@ -94,9 +94,22 @@ describe("staff admin routes", () => {
     expect(await h.prisma.team.count()).toBe(1);
   });
 
+  it("settings: copy-all-alerts address is saved lowercase, kept when omitted, cleared with blank, and must be an email", async () => {
+    const base = { defaultPriceFloorPct: 15, routing: { autoAssignByCompany: false, rules: [] } };
+    const put = await mgr().put("/s/settings", { ...base, notifications: { copyAllAlertsTo: " Mike@DSGdist.com " } });
+    expect(put.status).toBe(200);
+    expect(put.body.notifications).toEqual({ copyAllAlertsTo: "mike@dsgdist.com" });
+    expect((await mgr().put("/s/settings", base)).body.notifications.copyAllAlertsTo).toBe("mike@dsgdist.com"); // omitted = unchanged
+    expect((await mgr().put("/s/settings", { ...base, notifications: { copyAllAlertsTo: "not an email" } })).status).toBe(400);
+    expect((await h.s.put("/s/settings", { ...base, notifications: { copyAllAlertsTo: "x@y.com" } })).status).toBe(403);
+    expect((await mgr().put("/s/settings", { ...base, notifications: { copyAllAlertsTo: "" } })).body.notifications.copyAllAlertsTo).toBeNull();
+    expect((await mgr().put("/s/settings", { ...base, notifications: { copyAllAlertsTo: "a@b.com" } })).body.notifications.copyAllAlertsTo).toBe("a@b.com");
+    expect((await mgr().put("/s/settings", { ...base, notifications: { copyAllAlertsTo: null } })).body.notifications.copyAllAlertsTo).toBeNull();
+  });
+
   it("settings: defaults, full replace of routing rules, ids kept, validation", async () => {
     const { rep } = await people();
-    expect((await h.s.get("/s/settings")).body).toEqual({ defaultPriceFloorPct: 15, routing: { defaultTeamId: null, autoAssignByCompany: false, rules: [] } });
+    expect((await h.s.get("/s/settings")).body).toEqual({ defaultPriceFloorPct: 15, routing: { defaultTeamId: null, autoAssignByCompany: false, rules: [] }, notifications: { copyAllAlertsTo: null } });
     const team = (await mgr().post("/s/teams", { name: "T" })).body;
     const put = await mgr().put("/s/settings", {
       defaultPriceFloorPct: 12.5,

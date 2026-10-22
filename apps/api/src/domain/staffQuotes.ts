@@ -41,7 +41,7 @@ export async function loadStaffView(tx: Tx, deps: AppDeps, id: string, actor?: P
   });
 }
 
-export const WORKING_STATUSES = ["SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED"] as const;
+export const WORKING_STATUSES = ["DRAFT", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED"] as const;
 export const DEFAULT_EXPIRY_MS = (days: number) => days * 24 * 60 * 60 * 1000;
 
 export interface DraftRevisionInput {

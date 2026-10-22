@@ -21,9 +21,23 @@ export interface Recipient {
   smsWithoutOptIn?: boolean;
   quiet: { start: string | null; end: string | null; tz: string | null } | null;
   replyRole: ReplyRole;
+  /** Address copied on this recipient's email (the shop's "copy all alerts to" setting). */
+  cc?: string | null;
 }
 
-type Db = Pick<PrismaClient, "notificationPref" | "staff" | "customerProfile" | "smsOptOut">;
+type Db = Pick<PrismaClient, "notificationPref" | "staff" | "customerProfile" | "smsOptOut" | "shopSetting">;
+
+/** Placeholder addresses (".invalid" is reserved and never deliverable) count as "no email". */
+export const usableEmail = (s: string | null | undefined): string | null => {
+  const e = extractEmail(s);
+  return e && !e.endsWith(".invalid") ? e : null;
+};
+
+/** The "copy all alerts to" address: the Settings value, else SALES_NOTIFY_EMAIL. */
+async function copyAddress(db: Db, config: NotifyConfig): Promise<string | null> {
+  const row = await db.shopSetting.findUnique({ where: { shop: config.shop }, select: { copyAllAlertsTo: true } });
+  return usableEmail(row?.copyAllAlertsTo) ?? usableEmail(config.salesFallbackEmail);
+}
 
 /** A customer-side watcher in the shape the API stores (`Watcher`); legacy plain-email strings read as scope `all`, email only. */
 export interface WatcherRule {
@@ -119,24 +133,38 @@ async function staffRecipients(db: Db, shop: string, staff: Staff[], prefKey: st
   for (const s of staff) {
     const p = pickPref(prefs.filter((r) => r.staffId === s.id), prefKey, s.phone);
     // Staff have no settings screen yet: a staff pref row with sms + smsOptInAt (and a phone) switches texts on; email defaults on.
-    const email = extractEmail(s.email);
+    const email = usableEmail(s.email);
     out.push({ kind: "staff", key: s.id, name: s.name, email, emailOn: p.emailOn && !!email, phone: p.phone, smsOptedOut: p.phone ? await isSmsOptedOut(db, p.phone) : false, quiet: p.quiet, replyRole: "s" });
   }
   return out;
 }
 
-const fallback = (config: NotifyConfig): Recipient[] =>
-  config.salesFallbackEmail ? [{ kind: "staff", key: "fallback", name: "Sales", email: extractEmail(config.salesFallbackEmail), emailOn: true, phone: null, quiet: null, replyRole: "s" }] : [];
+const fallbackFor = (copyTo: string | null): Recipient[] =>
+  copyTo ? [{ kind: "staff", key: "fallback", name: "Sales", email: copyTo, emailOn: true, phone: null, quiet: null, replyRole: "s" }] : [];
 
-/** Assigned rep, else the quote's team (TeamMember), else every manager/admin, else `SALES_NOTIFY_EMAIL`. Inactive staff are never notified. */
+/**
+ * Sales-side email routing. Everyone resolved gets the mail with the shop's copy address on CC. If nobody resolved, or a resolved
+ * person has no usable email, the copy address receives it directly (as the only recipient for that gap).
+ */
+async function withCopy(db: Db, config: NotifyConfig, out: Recipient[]): Promise<Recipient[]> {
+  const copyTo = await copyAddress(db, config);
+  if (!copyTo) return out;
+  const gap = out.length === 0 || out.some((r) => r.kind === "staff" && !r.email);
+  const kept = out.filter((r) => r.email).map((r) => ({ ...r, cc: r.email === copyTo ? null : copyTo }));
+  const haveCopy = kept.some((r) => r.email === copyTo);
+  // Recipients without an email still keep their other channels (texts); only email routing changes.
+  const noEmail = out.filter((r) => !r.email);
+  return [...kept, ...noEmail, ...(gap && !haveCopy ? fallbackFor(copyTo) : [])];
+}
+
+/** Assigned rep, else the quote's team (TeamMember), else every manager/admin. Inactive staff are never notified. The copy address rides along on CC. */
 async function salesRecipients(db: Db, config: NotifyConfig, quote: Quote, plan: NotifyPlan): Promise<Recipient[]> {
   const shop = config.shop;
   let staff: Staff[] = [];
   if (quote.assignedRepId) staff = await db.staff.findMany({ where: { id: quote.assignedRepId, shop, active: true } });
   if (staff.length === 0 && quote.teamId) staff = await db.staff.findMany({ where: { shop, active: true, teams: { some: { teamId: quote.teamId } } } });
   if (staff.length === 0) staff = await db.staff.findMany({ where: { shop, active: true, role: { in: [...SALES_ROLES] } } });
-  const out = await staffRecipients(db, shop, staff, plan.salesPrefKey);
-  return out.length ? out : fallback(config);
+  return withCopy(db, config, await staffRecipients(db, shop, staff, plan.salesPrefKey));
 }
 
 /** Active managers and admins (FLOOR_APPROVAL_REQUESTED). The requester is left out unless that would leave nobody. */
@@ -144,6 +172,5 @@ async function managerRecipients(db: Db, config: NotifyConfig, plan: NotifyPlan,
   const shop = config.shop;
   const all = await db.staff.findMany({ where: { shop, active: true, role: { in: [...SALES_ROLES] } }, orderBy: { name: "asc" } });
   const others = excludeStaffId ? all.filter((s) => s.id !== excludeStaffId) : all;
-  const out = await staffRecipients(db, shop, others, plan.salesPrefKey);
-  return out.length ? out : fallback(config);
+  return withCopy(db, config, await staffRecipients(db, shop, others, plan.salesPrefKey));
 }

@@ -249,6 +249,7 @@ async function sendEmail(tx: Tx, deps: WorkerDeps, ev: Event, quote: Quote, plan
     const res = await deps.email.send({
       from: config.emailFrom,
       to: r.email!,
+      ...(r.cc ? { cc: [r.cc] } : {}),
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,

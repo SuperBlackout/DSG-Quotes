@@ -332,3 +332,57 @@ describe("delivery robustness", () => {
     expect(l.map((x) => `${x.channel}:${x.to}:${x.status}`).sort()).toEqual(["EMAIL:dana@acme.test:SENT", `SMS:${PHONE}:SENT`]);
   });
 });
+
+describe('"copy all quote alerts to" (Settings)', () => {
+  const COPY = "mike@dsgdist.test";
+  const setCopy = (v: string | null) => ctx.prisma.shopSetting.upsert({ where: { shop: config.shop }, create: { shop: config.shop, copyAllAlertsTo: v }, update: { copyAllAlertsTo: v } });
+  const submit = async (quote: { id: string }) => {
+    await mkEvent(ctx.prisma, quote.id, "SUBMIT", "CUSTOMER");
+    await processBatch(ctx.deps);
+  };
+
+  it("the rep gets the alert and the copy address is on CC, never the customer's email", async () => {
+    const { quote } = await world();
+    await setCopy(COPY);
+    await submit(quote);
+    const rep = ctx.email.sent.find((m) => m.to === "rita@dsg.test")!;
+    expect(rep.cc).toEqual([COPY]);
+    expect(ctx.email.sent.some((m) => m.to === COPY)).toBe(false);
+    expect(ctx.email.sent.find((m) => m.to === "dana@acme.test")?.cc).toBeUndefined();
+  });
+
+  it("a rep with no usable email (placeholder address) is skipped and the copy address gets it alone", async () => {
+    const rep = await mkStaff(ctx.prisma, { name: "Mike", email: "staff-123@users.invalid" });
+    await mkStaffPrefs(ctx.prisma, rep.id, ALL);
+    const quote = await mkQuote(ctx.prisma, { assignedRepId: rep.id, status: "SUBMITTED" });
+    await setCopy(COPY);
+    await submit(quote);
+    const toCopy = emailTo(COPY);
+    expect(toCopy).toHaveLength(1);
+    expect(toCopy[0]!.cc).toBeUndefined();
+    expect(ctx.email.sent.some((m) => m.to.endsWith(".invalid"))).toBe(false);
+  });
+
+  it("nothing is copied when the setting is empty, and a rep who is the copy address gets one mail", async () => {
+    const { rep, quote } = await world();
+    await setCopy(null);
+    await submit(quote);
+    expect(emailTo("rita@dsg.test")[0]!.cc).toBeUndefined();
+    ctx.email.sent.length = 0;
+    await ctx.prisma.event.deleteMany();
+    await setCopy(rep.email);
+    await submit(quote);
+    expect(emailTo("rita@dsg.test")).toHaveLength(1);
+    expect(emailTo("rita@dsg.test")[0]!.cc).toBeUndefined();
+  });
+
+  it("with no staff at all the copy address receives the alert (setting wins over SALES_NOTIFY_EMAIL)", async () => {
+    await mkCustomerPrefs(ctx.prisma);
+    const quote = await mkQuote(ctx.prisma, { status: "SUBMITTED" });
+    ctx.deps.config.salesFallbackEmail = "old-default@dsg.test";
+    await setCopy(COPY);
+    await submit(quote);
+    expect(emailTo(COPY)).toHaveLength(1);
+    expect(emailTo("old-default@dsg.test")).toHaveLength(0);
+  });
+});

@@ -46,6 +46,7 @@ const settingsBody = z.object({
       )
       .max(500),
   }),
+  notifications: z.object({ copyAllAlertsTo: z.string().trim().max(254).email().nullable().optional().or(z.literal("").transform(() => null)) }).optional(),
 });
 const savedRepliesBody = z.object({
   items: z
@@ -241,6 +242,7 @@ export async function registerAdminRoutes(app: FastifyInstance, deps: AppDeps) {
         autoAssignByCompany: s?.autoAssignByCompany ?? false,
         rules: rules.map((r) => ({ id: r.id, companyId: r.companyId, companyName: nameOf.get(r.companyId) ?? null, repId: r.repId, teamId: r.teamId })),
       },
+      notifications: { copyAllAlertsTo: s?.copyAllAlertsTo ?? null },
     };
   };
 
@@ -250,6 +252,7 @@ export async function registerAdminRoutes(app: FastifyInstance, deps: AppDeps) {
     requireManager(req, "change settings");
     const body = parse(settingsBody, req.body);
     const { routing } = body;
+    const copyTo = body.notifications === undefined ? undefined : (body.notifications.copyAllAlertsTo?.toLowerCase() ?? null);
     if (routing.defaultTeamId) await assertTeamsExist([routing.defaultTeamId], "routing.defaultTeamId");
     routing.rules.forEach((r, i) => {
       if (!r.repId && !r.teamId) throw new ApiError("VALIDATION_FAILED", "A routing rule needs a rep, a team or both", { field: `routing.rules.${i}` });
@@ -261,8 +264,8 @@ export async function registerAdminRoutes(app: FastifyInstance, deps: AppDeps) {
       const floor = D(body.defaultPriceFloorPct).toDecimalPlaces(2);
       await tx.shopSetting.upsert({
         where: { shop },
-        create: { shop, defaultPriceFloorPct: floor, defaultTeamId: routing.defaultTeamId ?? null, autoAssignByCompany: routing.autoAssignByCompany },
-        update: { defaultPriceFloorPct: floor, defaultTeamId: routing.defaultTeamId ?? null, autoAssignByCompany: routing.autoAssignByCompany },
+        create: { shop, defaultPriceFloorPct: floor, defaultTeamId: routing.defaultTeamId ?? null, autoAssignByCompany: routing.autoAssignByCompany, copyAllAlertsTo: copyTo ?? null },
+        update: { defaultPriceFloorPct: floor, defaultTeamId: routing.defaultTeamId ?? null, autoAssignByCompany: routing.autoAssignByCompany, ...(copyTo !== undefined ? { copyAllAlertsTo: copyTo } : {}) },
       });
       const existing = new Set((await tx.routingRule.findMany({ where: { shop }, select: { id: true } })).map((r) => r.id));
       await tx.routingRule.deleteMany({ where: { shop } });

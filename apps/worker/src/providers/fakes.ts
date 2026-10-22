@@ -36,7 +36,7 @@ export class FakeSmsProvider implements SmsProvider {
 export class ConsoleEmailProvider implements EmailProvider {
   private n = 0;
   async send(msg: EmailMessage): Promise<SendResult> {
-    console.log(`[dev email] to=${msg.to} reply-to=${msg.replyTo ?? "-"} subject=${msg.subject}\n${msg.text}\n`);
+    console.log(`[dev email] to=${msg.to}${msg.cc?.length ? ` cc=${msg.cc.join(",")}` : ""} reply-to=${msg.replyTo ?? "-"} subject=${msg.subject}\n${msg.text}\n`);
     return { providerId: `console-email-${++this.n}` };
   }
 }

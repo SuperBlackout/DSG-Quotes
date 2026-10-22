@@ -287,6 +287,14 @@ export async function staffRoutes(app: FastifyInstance) {
       if (!(WORKING_STATUSES as readonly string[]).includes(quote.status)) {
         throw new ApiError("NOT_EDITABLE", "This quote can't be edited in its current status", { status: quote.status });
       }
+      // A rep-opened DRAFT has no staff working set yet: seed it from the customer's lines so the editor's line ids resolve.
+      if (quote.status === "DRAFT" && (await tx.quoteLine.count({ where: { quoteId: id, set: "STAFF" } })) === 0) {
+        await materializeStaffSet(tx, id);
+        const mapped = await tx.quoteLine.findMany({ where: { quoteId: id, set: "STAFF" }, orderBy: { position: "asc" } });
+        const src = await tx.quoteLine.findMany({ where: { quoteId: id, set: "CUSTOMER" }, orderBy: { position: "asc" } });
+        const byOld = new Map(src.map((l, i) => [l.id, mapped[i]?.id]));
+        body.lines = body.lines.map((l) => (l.id && byOld.has(l.id) ? { ...l, id: byOld.get(l.id)! } : l));
+      }
       await saveDraftRevision(tx, deps, id, body, async (v) => prices.get(v) ?? null);
     });
     return view(id, me);

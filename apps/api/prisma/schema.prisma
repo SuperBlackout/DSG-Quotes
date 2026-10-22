@@ -330,6 +330,8 @@ model ShopSetting {
   defaultPriceFloorPct Decimal  @default(15) @db.Decimal(5, 2)
   defaultTeamId        String?
   autoAssignByCompany  Boolean  @default(false)
+  /// Quote alerts to sales are copied here; also the only recipient when a rep has no usable email.
+  copyAllAlertsTo      String?
   updatedAt            DateTime @updatedAt
 }
 

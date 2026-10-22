@@ -33,7 +33,7 @@ export interface Ctx {
   clock: { now: Date };
 }
 
-const TABLES = ["Event", "Message", "QuoteLine", "QuoteVersion", "Quote", "Job", "NotificationPref", "CustomerProfile", "Counter", "WebhookReceipt", "Staff", "Team", "TeamMember", "NotificationLog", "SmsOptOut"];
+const TABLES = ["Event", "Message", "QuoteLine", "QuoteVersion", "Quote", "Job", "NotificationPref", "CustomerProfile", "Counter", "WebhookReceipt", "Staff", "Team", "TeamMember", "NotificationLog", "SmsOptOut", "ShopSetting"];
 
 export function useWorker(): Ctx {
   const ctx = {} as Ctx;

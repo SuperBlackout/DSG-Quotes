@@ -72,6 +72,8 @@ function Settings({ data }: { data: SettingsData }) {
   const [error, setError] = useState<string | null>(null);
 
   const floor = validateFloorPct(floorText);
+  const copyText = (cfg.notifications?.copyAllAlertsTo ?? "").trim();
+  const copyError = copyText && !/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(copyText) ? "Enter one email address." : null;
   const staffName = (id: string | null | undefined) => staff.find((m) => m.id === id)?.name ?? "Rep";
 
   const run = async (name: string, fn: () => Promise<void>, onError: (e: unknown) => string = errorMessage) => {
@@ -91,6 +93,7 @@ function Settings({ data }: { data: SettingsData }) {
   const saveSettings = () =>
     run("settings", async () => {
       if (!floor.ok) throw new Error(floor.error);
+      if (copyError) throw new Error(copyError);
       const saved = await api.putSettings(toSettingsPayload(cfg, floor.value));
       setCfg(saved);
       setFloorText(String(saved.defaultPriceFloorPct));
@@ -160,7 +163,7 @@ function Settings({ data }: { data: SettingsData }) {
 
   return (
     <s-page heading="Settings" inlineSize="large">
-      <s-button slot="primary-action" variant="primary" onClick={saveSettings} loading={busy === "settings"} disabled={!floor.ok || readOnly}>
+      <s-button slot="primary-action" variant="primary" onClick={saveSettings} loading={busy === "settings"} disabled={!floor.ok || !!copyError || readOnly}>
         Save settings
       </s-button>
 
@@ -183,6 +186,24 @@ function Settings({ data }: { data: SettingsData }) {
             error={floor.ok ? undefined : floor.error}
             disabled={readOnly}
             onInput={(e) => setFloorText(e.currentTarget.value)}
+          />
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Quote alerts">
+        <s-stack gap="base">
+          <s-text color="subdued">
+            Email alerts about quotes go to the assigned rep (or the team, or the managers). Add an address here to be copied on every one of
+            them. If the rep has no usable email on file, this address gets the alert by itself, so none are lost. Leave blank to turn the
+            copy off.
+          </s-text>
+          <s-text-field
+            label="Copy all quote alerts to"
+            placeholder="sales@yourcompany.com"
+            value={cfg.notifications?.copyAllAlertsTo ?? ""}
+            error={copyError ?? undefined}
+            disabled={readOnly}
+            onInput={(e) => setCfg((c) => ({ ...c, notifications: { copyAllAlertsTo: e.currentTarget.value } }))}
           />
         </s-stack>
       </s-section>

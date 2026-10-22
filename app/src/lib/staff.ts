@@ -96,6 +96,7 @@ export function toSettingsPayload(s: StaffSettings, defaultPriceFloorPct: number
         teamId: r.teamId ?? null,
       })),
     },
+    notifications: { copyAllAlertsTo: s.notifications?.copyAllAlertsTo?.trim() || null },
   };
 }
 

@@ -1,6 +1,8 @@
 export interface EmailMessage {
   from: string;
   to: string;
+  /** Copied on the message (visible to the recipient). */
+  cc?: string[];
   subject: string;
   text: string;
   html: string;

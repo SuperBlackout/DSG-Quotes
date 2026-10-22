@@ -204,6 +204,7 @@ describe("staff quotes", () => {
       expect((await h.s.put(`/s/quotes/${q.id}/draft-revision`, { lines: [{ id: line.id, variantId: V_GOOD, qty: 1, quotedPrice: "abc" }] })).status).toBe(400);
       expect((await h.s.put(`/s/quotes/${q.id}/draft-revision`, { lines: [{ variantId: "gid://shopify/ProductVariant/404", qty: 1, quotedPrice: "1.00" }] })).status).toBe(422);
       const draft = await draftWith(h);
+      await h.prisma.quote.update({ where: { id: draft.id }, data: { status: "DECLINED" } });
       const locked = await h.s.put(`/s/quotes/${draft.id}/draft-revision`, { lines: [] });
       expect(locked.status).toBe(409);
       expect(locked.body.code).toBe("NOT_EDITABLE");
@@ -272,6 +273,17 @@ describe("staff quotes", () => {
       expect((await h.s.post(`/s/quotes/${q.id}/send`)).body.expiresAt).toBe(new Date(h.clock.now.getTime() + 14 * DAY).toISOString());
     });
 
+    it("a rep-created DRAFT can be priced and sent straight to the customer", async () => {
+      await ensureStaff(h, STAFF_REP);
+      const draft = await draftWith(h);
+      expect((await h.prisma.quote.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe("DRAFT");
+      const line = (await h.s.get(`/s/quotes/${draft.id}`)).body.workingLines[0];
+      await h.s.put(`/s/quotes/${draft.id}/draft-revision`, { lines: [{ id: line.id, variantId: V_GOOD, qty: 1, quotedPrice: "50.00" }] });
+      const sent = await h.s.post(`/s/quotes/${draft.id}/send`);
+      expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+      expect((await h.prisma.quote.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe("QUOTE_READY");
+    });
+
     it("send refuses a past expiry, an empty revision and non-sendable statuses", async () => {
       await ensureStaff(h, STAFF_REP);
       const q = await submitted(h);
@@ -282,8 +294,9 @@ describe("staff quotes", () => {
       expect(past.body.code).toBe("VALIDATION_FAILED");
       await h.s.put(`/s/quotes/${q.id}/draft-revision`, { lines: [] });
       expect((await h.s.post(`/s/quotes/${q.id}/send`)).status).toBe(422);
-      const draft = await draftWith(h);
-      const bad = await h.s.post(`/s/quotes/${draft.id}/send`);
+      const declined = await draftWith(h);
+      await h.prisma.quote.update({ where: { id: declined.id }, data: { status: "DECLINED" } });
+      const bad = await h.s.post(`/s/quotes/${declined.id}/send`);
       expect(bad.status).toBe(409);
       expect(bad.body.code).toBe("INVALID_TRANSITION");
       expect((await h.prisma.quote.findUniqueOrThrow({ where: { id: q.id } })).status).toBe("SUBMITTED");

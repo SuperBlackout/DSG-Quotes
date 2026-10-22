@@ -26,6 +26,7 @@ export class PostmarkEmailProvider implements EmailProvider {
         body: JSON.stringify({
           From: msg.from,
           To: msg.to,
+          ...(msg.cc?.length ? { Cc: msg.cc.join(", ") } : {}),
           Subject: msg.subject,
           TextBody: msg.text,
           HtmlBody: msg.html,
