@@ -5,7 +5,7 @@ import { replyAddress } from "./lib/reply-token";
 import { inQuietHours, quietEndsAt } from "./lib/quiet-hours";
 import { ProviderError } from "./providers/types";
 import { TWILIO_UNSUBSCRIBED } from "./providers/twilio";
-import { resolveRecipients, type Recipient } from "./recipients";
+import { customerQuoteLink, resolveRecipients, type Recipient } from "./recipients";
 import { planFor, type NotifyPlan, type Side } from "./rules";
 import { renderEmail, renderSms, type TemplateCtx } from "./templates";
 
@@ -217,7 +217,7 @@ async function buildContext(tx: Tx, deps: WorkerDeps, ev: Event, quote: Quote, p
 
 /** Customer links use APP_PUBLIC_URL (the storefront app proxy); staff and manager links open the admin. */
 const linkFor = (deps: WorkerDeps, quoteId: string, side: Side) =>
-  side === "customer" ? `${deps.config.appPublicUrl}/quotes/${quoteId}` : `${deps.config.adminQuoteUrl}/${quoteId}`;
+  side === "customer" ? customerQuoteLink(deps.config, quoteId) : `${deps.config.adminQuoteUrl}/${quoteId}`;
 
 // ------------------------------------------------------------------------------------------------ send log
 

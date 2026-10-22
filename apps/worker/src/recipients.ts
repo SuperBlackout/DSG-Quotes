@@ -174,3 +174,7 @@ async function managerRecipients(db: Db, config: NotifyConfig, plan: NotifyPlan,
   const others = excludeStaffId ? all.filter((s) => s.id !== excludeStaffId) : all;
   return withCopy(db, config, await staffRecipients(db, shop, others, plan.salesPrefKey));
 }
+
+/** Where a dealer opens a quote: the storefront page when configured, else the app-proxy path. */
+export const customerQuoteLink = (config: { customerQuotePageUrl: string; appPublicUrl: string }, quoteId: string): string =>
+  config.customerQuotePageUrl ? `${config.customerQuotePageUrl}?id=${encodeURIComponent(quoteId)}` : `${config.appPublicUrl}/quotes/${quoteId}`;

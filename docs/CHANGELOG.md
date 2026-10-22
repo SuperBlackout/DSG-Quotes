@@ -56,3 +56,4 @@ Applies the requests recorded by the four builders. Code follow-ups per folder: 
 - Cart block styling: fixed oversized inputs, page-width container, light card and a visible primary button.
 
 - Worker: daily rep digest skips staff with placeholder (`@users.invalid`) emails instead of failing the cron run.
+- Worker: optional `CUSTOMER_QUOTE_PAGE_URL` (e.g. https://dsg.direct/pages/quote) makes dealer email links open the on-site quote page (`?id=`). Staff links use `ADMIN_QUOTE_URL` (set to the admin.shopify.com app URL; the old default 404'd).

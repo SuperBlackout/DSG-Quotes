@@ -13,6 +13,7 @@ export const NOW = new Date("2026-03-02T15:00:00.000Z"); // 10:00 America/New_Yo
 export const config: NotifyConfig = {
   shop: SHOP,
   appPublicUrl: "https://dsg.test/apps/quotes",
+  customerQuotePageUrl: "",
   adminQuoteUrl: "https://admin.test/quotes",
   emailFrom: "quotes@dsg.test",
   replyDomain: "reply.dsg.test",

@@ -1,7 +1,7 @@
 import type { Quote } from "@prisma/client";
 import type { WorkerDeps } from "../config";
 import { extractEmail } from "../lib/reply-token";
-import { parseWatchers, watcherApplies } from "../recipients";
+import { customerQuoteLink, parseWatchers, watcherApplies } from "../recipients";
 import { renderWeeklySummary, type WeeklySummaryQuote } from "../templates-weekly";
 
 /** Quotes still in play for the customer. Drafts are the customer's own scratch work and EXPIRED/ORDERED/DECLINED/ARCHIVED are done. */
@@ -29,8 +29,8 @@ export async function sendWeeklySummaries(deps: WorkerDeps): Promise<{ sent: num
     deps.prisma.customerProfile.findMany({ where: { shop, customerId: { in: customerIds } } }),
   ]);
 
-  const row = (q: Quote): WeeklySummaryQuote => ({ number: q.number, title: q.title, status: q.status, total: q.total.toFixed(2), expiresAt: q.expiresAt, link: `${deps.config.appPublicUrl}/quotes/${q.id}` });
-  const listUrl = `${deps.config.appPublicUrl}/quotes`;
+  const row = (q: Quote): WeeklySummaryQuote => ({ number: q.number, title: q.title, status: q.status, total: q.total.toFixed(2), expiresAt: q.expiresAt, link: customerQuoteLink(deps.config, q.id) });
+  const listUrl = deps.config.customerQuotePageUrl || `${deps.config.appPublicUrl}/quotes`;
   let sent = 0;
   let failed = 0;
   const deliver = async (to: string, name: string, quotes: Quote[]) => {

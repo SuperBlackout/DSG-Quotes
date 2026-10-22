@@ -9,6 +9,8 @@ export interface NotifyConfig {
   shop: string;
   /** Customer-facing base URL, e.g. https://dsg.direct/apps/quotes. Quote links are `${appPublicUrl}/quotes/<id>`. */
   appPublicUrl: string;
+  /** Storefront page that shows a dealer their quote (e.g. https://dsg.direct/pages/quote); links are `<page>?id=<quoteId>`. Falls back to `${appPublicUrl}/quotes/<id>` when unset. */
+  customerQuotePageUrl: string;
   /** Base for staff links: `${adminQuoteUrl}/<quoteId>`. */
   adminQuoteUrl: string;
   emailFrom: string;
@@ -63,6 +65,7 @@ export function loadNotifyConfig(env: NodeJS.ProcessEnv = process.env): NotifyCo
   return {
     shop,
     appPublicUrl: (env.APP_PUBLIC_URL ?? "").replace(/\/$/, ""),
+    customerQuotePageUrl: (env.CUSTOMER_QUOTE_PAGE_URL ?? "").replace(/\/$/, ""),
     adminQuoteUrl: (env.ADMIN_QUOTE_URL ?? `https://${shop}/admin/apps/dsg-quotes/quotes`).replace(/\/$/, ""),
     emailFrom: from,
     replyDomain: env.EMAIL_REPLY_DOMAIN ?? "reply.dsg.direct",
