@@ -228,7 +228,7 @@ function Settings({ data }: { data: SettingsData }) {
             details="When on, new quotes from the companies below go straight to the listed rep or team. When off, the rules are kept but ignored."
             checked={cfg.routing.autoAssignByCompany}
             disabled={readOnly}
-            onChange={(e) => setCfg((c) => ({ ...c, routing: { ...c.routing, autoAssignByCompany: e.currentTarget.checked } }))}
+            onChange={(e) => { const on = e.currentTarget.checked; setCfg((c) => ({ ...c, routing: { ...c.routing, autoAssignByCompany: on } })); }}
           />
           {cfg.routing.rules.length > 0 ? (
             <s-table>
@@ -411,7 +411,7 @@ function Settings({ data }: { data: SettingsData }) {
             <s-switch
               label="Share with all staff"
               checked={newReply.shared}
-              onChange={(e) => setNewReply((r) => ({ ...r, shared: e.currentTarget.checked }))}
+              onChange={(e) => { const on = e.currentTarget.checked; setNewReply((r) => ({ ...r, shared: on })); }}
             />
           ) : null}
           <s-button
