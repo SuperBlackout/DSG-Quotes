@@ -45,3 +45,4 @@ Applies the requests recorded by the four builders. Code follow-ups per folder: 
 - Staff may SEND_REVISION from DRAFT so rep-created quotes can be priced and sent (previously the editor was read-only).
 - Admin quote editor: Add product button moved inline (the section slot wasn't rendered).
 - Fix: customer-account session tokens (bare shop in dest, no iss) are now accepted; they were rejected as expired.
+- Cart block styling: fixed oversized inputs, page-width container, light card and a visible primary button.
