@@ -76,6 +76,8 @@ const messageBody = z.object({
   body: z.string().min(1).max(10000),
   attachments: z.array(z.object({ url: z.string().url(), name: z.string(), size: z.number().int(), mime: z.string() })).max(10).optional(),
   internal: z.boolean().default(false),
+  /** Which alert channels to use for this customer message; omitted = both. The customer's own settings still apply. */
+  channels: z.object({ email: z.boolean(), sms: z.boolean() }).optional(),
 });
 
 const TABS = ["needs_response", "unassigned", "waiting_customer", "accepted", "expiring", "all"] as const;
@@ -433,6 +435,9 @@ export async function staffRoutes(app: FastifyInstance) {
     }
     const msg = await deps.prisma.$transaction(async (tx) => {
       const quote = await getStaffQuoteRow(tx, deps, id, true);
+      if (!body.internal && body.channels && !body.channels.email && !body.channels.sms) {
+        throw new ApiError("VALIDATION_FAILED", "Pick email, text or both for this message", { field: "channels" });
+      }
       // A customer-visible reply on a DRAFT would reach someone who has not submitted anything. Internal notes are fine.
       if (!body.internal && quote.status === "DRAFT") {
         throw new ApiError("NOT_EDITABLE", "This quote is still a draft. Only internal notes can be added until it is submitted.", { status: quote.status });
@@ -449,7 +454,7 @@ export async function staffRoutes(app: FastifyInstance) {
         },
       });
       // Internal notes NEVER emit an event, so the worker can't notify the customer about them (rule 5).
-      if (!body.internal) await writeEvent(tx, id, "NEW_MESSAGE", "staff", me.id, { messageId: m.id }, deps.now());
+      if (!body.internal) await writeEvent(tx, id, "NEW_MESSAGE", "staff", me.id, { messageId: m.id, ...(body.channels ? { channels: body.channels } : {}) }, deps.now());
       await tx.quote.update({ where: { id }, data: { updatedAt: deps.now() } });
       return m;
     });

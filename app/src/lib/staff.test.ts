@@ -93,6 +93,7 @@ describe("settings payload (PUT /s/settings is a full replace)", () => {
     );
     expect(body).toEqual({
       defaultPriceFloorPct: 15,
+      notifications: { copyAllAlertsTo: null },
       routing: {
         defaultTeamId: null,
         autoAssignByCompany: true,

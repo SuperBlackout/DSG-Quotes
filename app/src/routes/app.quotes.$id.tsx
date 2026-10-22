@@ -246,12 +246,13 @@ function QuoteEditor({ data }: { data: EditorData }) {
     }
   };
 
-  const sendMessage = async (body: string, internal: boolean, files: File[]) => {
+  const sendMessage = async (body: string, internal: boolean, files: File[], channels: { email: boolean; sms: boolean }) => {
     const attachments: Attachment[] = [];
     for (const f of files) attachments.push(await uploadAttachment(api, quote.id, f, f));
     const m: StaffMessage = await api.postMessage(quote.id, {
       body,
       internal,
+      ...(internal ? {} : { channels }),
       ...(attachments.length > 0 ? { attachments } : {}),
     });
     setQuote((prev) => ({ ...prev, messages: [...prev.messages, m] }));

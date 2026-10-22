@@ -130,7 +130,7 @@ export function createStaffClient(opts: ClientOptions) {
     decline: (id: string, body: { reason?: string } = {}) => request<StaffQuote>("POST", `${q(id)}/decline`, body),
     listMessages: (id: string, cursor?: string) =>
       request<{ items: StaffMessage[]; nextCursor: string | null }>("GET", `${q(id)}/messages${buildQuery({ cursor })}`),
-    postMessage: (id: string, body: { body: string; internal?: boolean; attachments?: Attachment[] }) =>
+    postMessage: (id: string, body: { body: string; internal?: boolean; attachments?: Attachment[]; channels?: { email: boolean; sms: boolean } }) =>
       request<StaffMessage>("POST", `${q(id)}/messages`, body),
     summary: () => request<StaffSummary>("GET", "/s/reports/summary"),
     /** No status change; notifies managers. Omit `lineIds` to request approval for every flagged line. */

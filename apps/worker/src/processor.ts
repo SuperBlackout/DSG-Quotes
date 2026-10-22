@@ -98,6 +98,11 @@ const readState = (payload: unknown): NotifyState => {
   const n = asObj(asObj(payload)._notify);
   return { attempts: typeof n.attempts === "number" ? n.attempts : 0, sent: Array.isArray(n.sent) ? n.sent.filter((x): x is string => typeof x === "string") : [] };
 };
+/** Per-message channel choice written by the API (`channels: {email, sms}`); missing or malformed means both. */
+const channelsOf = (payload: unknown): { email: boolean; sms: boolean } => {
+  const c = asObj(asObj(payload).channels);
+  return typeof c.email === "boolean" && typeof c.sms === "boolean" ? { email: c.email, sms: c.sms } : { email: true, sms: true };
+};
 const writeState = (tx: Tx, ev: Event, s: NotifyState) =>
   tx.event.update({ where: { id: ev.id }, data: { payload: json({ ...asObj(ev.payload), _notify: s }) } });
 
@@ -107,6 +112,8 @@ async function fanOut(tx: Tx, deps: WorkerDeps, ev: Event, quote: Quote, plan: N
   const state = readState(ev.payload);
   const siblingIds: string[] = [];
   let messages: Message[] | undefined;
+  // A rep can limit one message to email or text; bundled messages allow a channel if any of them asked for it.
+  let allow = channelsOf(ev.payload);
 
   if (ev.type === "NEW_MESSAGE") {
     // Bundling: the first alert goes out at once; further messages on the same quote within the window wait and leave as ONE alert
@@ -126,6 +133,10 @@ async function fanOut(tx: Tx, deps: WorkerDeps, ev: Event, quote: Quote, plan: N
     }
     const siblings = await tx.event.findMany({ where: { quoteId: quote.id, type: "NEW_MESSAGE", actorType: ev.actorType, notifiedAt: null, id: { not: ev.id } } });
     siblingIds.push(...siblings.map((s) => s.id));
+    for (const sib of siblings) {
+      const c = channelsOf(sib.payload);
+      allow = { email: allow.email || c.email, sms: allow.sms || c.sms };
+    }
     const ids = [ev, ...siblings].map((e) => asObj(e.payload).messageId).filter((x): x is string => typeof x === "string");
     // Internal notes are filtered here as well as at the source (the API never emits an event for them): rule 5.
     messages = await tx.message.findMany({ where: { id: { in: ids }, quoteId: quote.id, internal: false }, orderBy: { createdAt: "asc" } });
@@ -145,7 +156,7 @@ async function fanOut(tx: Tx, deps: WorkerDeps, ev: Event, quote: Quote, plan: N
     for (const r of recipients) {
       const ctx: TemplateCtx = { ...base, side, canReplyByEmail: true };
       if (r.smsWithoutOptIn) deps.log.info("watcher asked for texts but has no opt-in on file; not texted", { quoteId: quote.id, watcher: r.key });
-      if (r.emailOn && r.email) {
+      if (allow.email && r.emailOn && r.email) {
         const key = `email:${side}:${r.key}`;
         if (!sent.has(key)) {
           const res = await sendEmail(tx, deps, ev, quote, plan, side, r, ctx);
@@ -153,7 +164,7 @@ async function fanOut(tx: Tx, deps: WorkerDeps, ev: Event, quote: Quote, plan: N
           else sent.add(key);
         }
       }
-      if (r.phone) {
+      if (allow.sms && r.phone) {
         const key = `sms:${side}:${r.key}`;
         if (!sent.has(key)) {
           const res = await sendSms(tx, deps, ev, quote, plan, side, r, ctx);

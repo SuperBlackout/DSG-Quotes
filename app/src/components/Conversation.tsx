@@ -75,7 +75,7 @@ export function Conversation({
   manageRepliesHref?: string;
   disabled?: boolean;
   /** Uploads `files` (signed URL, PUT) and posts the message. Throws on failure; the draft is kept. */
-  onSend: (body: string, internal: boolean, files: File[]) => Promise<void>;
+  onSend: (body: string, internal: boolean, files: File[], channels: { email: boolean; sms: boolean }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<"customer" | "internal">("customer");
   const [text, setText] = useState("");
@@ -83,6 +83,8 @@ export function Conversation({
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viaEmail, setViaEmail] = useState(true);
+  const [viaText, setViaText] = useState(true);
   const internal = mode === "internal";
 
   const addFiles = (list: FileList | null) => {
@@ -97,10 +99,14 @@ export function Conversation({
   const send = async () => {
     const body = text.trim();
     if (!body) return;
+    if (!internal && !viaEmail && !viaText) {
+      setError("Choose Email, Text or both before sending.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await onSend(body, internal, files);
+      await onSend(body, internal, files, { email: viaEmail, sms: viaText });
       setText("");
       setFiles([]);
     } catch (e) {
@@ -112,7 +118,7 @@ export function Conversation({
 
   return (
     <s-stack gap="base">
-      <s-text color="subdued">Customer messages go out by email and text per their notification settings.</s-text>
+      <s-text color="subdued">Customer messages go out by the channels you tick below, within the customer's own notification settings.</s-text>
       <s-stack gap="small">
         {messages.length === 0 ? <s-text color="subdued">No messages yet.</s-text> : null}
         {messages.map((m) => (
@@ -168,6 +174,13 @@ export function Conversation({
           </s-stack>
         ))}
       </s-stack>
+      {internal ? null : (
+        <s-stack direction="inline" gap="base" alignItems="center">
+          <s-text color="subdued">Notify customer by:</s-text>
+          <s-checkbox label="Email" checked={viaEmail} onChange={(e) => { const v = e.currentTarget.checked; setViaEmail(v); }} />
+          <s-checkbox label="Text" checked={viaText} onChange={(e) => { const v = e.currentTarget.checked; setViaText(v); }} />
+        </s-stack>
+      )}
       <s-stack direction="inline" gap="small" alignItems="center">
         <s-select
           label="Saved replies"

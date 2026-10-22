@@ -179,6 +179,34 @@ describe("internal messages never notify customers (CLAUDE.md rule 5)", () => {
   });
 });
 
+describe("per-message channel choice", () => {
+  const send = async (channels?: { email: boolean; sms: boolean }) => {
+    const quote = await mkQuote(ctx.prisma);
+    await mkCustomerPrefs(ctx.prisma);
+    const m = await ctx.prisma.message.create({ data: { quoteId: quote.id, authorType: "STAFF", authorName: "Rita", body: "hello dealer" } });
+    await mkEvent(ctx.prisma, quote.id, "NEW_MESSAGE", "STAFF", { messageId: m.id, ...(channels ? { channels } : {}) });
+    await processBatch(ctx.deps);
+  };
+
+  it("no choice means every channel the customer allows", async () => {
+    await send();
+    expect(ctx.email.sent).toHaveLength(1);
+    expect(ctx.sms.sent).toHaveLength(1);
+  });
+
+  it("email only skips the text", async () => {
+    await send({ email: true, sms: false });
+    expect(ctx.email.sent).toHaveLength(1);
+    expect(ctx.sms.sent).toHaveLength(0);
+  });
+
+  it("text only skips the email", async () => {
+    await send({ email: false, sms: true });
+    expect(ctx.email.sent).toHaveLength(0);
+    expect(ctx.sms.sent).toHaveLength(1);
+  });
+});
+
 describe("NEW_MESSAGE bundling (5 minute window)", () => {
   const say = async (quoteId: string, body: string, actor: "CUSTOMER" | "STAFF" = "STAFF") => {
     const m = await ctx.prisma.message.create({ data: { quoteId, authorType: actor, authorName: actor === "STAFF" ? "Rita" : "Dana", body, createdAt: new Date(ctx.clock.now) } });

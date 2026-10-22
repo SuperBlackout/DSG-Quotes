@@ -713,6 +713,12 @@ paths:
                 - type: object
                   properties:
                     internal: { type: boolean, default: false }
+                    channels:
+                      type: object
+                      description: Which alert channels to use for this customer message (default both). At least one must be true; the customer's own notification settings still apply.
+                      properties:
+                        email: { type: boolean }
+                        sms: { type: boolean }
       responses:
         "201":
           description: Created
