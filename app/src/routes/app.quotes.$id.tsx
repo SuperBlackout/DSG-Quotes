@@ -514,7 +514,7 @@ function QuoteEditor({ data }: { data: EditorData }) {
       </s-section>
 
       {/* ------------------------------------------------------------------ conversation (aside) */}
-      <s-section slot="aside" heading="Conversation" accessibilityLabel="Conversation">
+      <s-section heading="Conversation: message the customer" accessibilityLabel="Conversation">
         <Conversation
           messages={quote.messages}
           customerName={customerFirst}
