@@ -67,7 +67,8 @@ export function signShopifyWebhook(rawBody: Buffer | string, secret: string): st
 // ---------------------------------------------------------------- session tokens (JWT HS256)
 
 export interface SessionClaims {
-  iss: string;
+  /** Present on admin session tokens, absent on customer-account tokens. */
+  iss?: string;
   dest: string;
   aud: string;
   sub: string;
@@ -111,9 +112,10 @@ export function verifySessionToken(token: string, opts: VerifyTokenOptions): Tok
   if (typeof claims.exp !== "number" || now > claims.exp + leeway) return { ok: false, reason: "token expired" };
   if (claims.nbf !== undefined && now < claims.nbf - leeway) return { ok: false, reason: "token not yet valid" };
   if (claims.aud !== opts.audience) return { ok: false, reason: "wrong audience" };
-  if (typeof claims.dest !== "string" || claims.dest !== `https://${opts.shopDomain}`) return { ok: false, reason: "wrong shop" };
+  // Admin tokens carry dest "https://<shop>"; customer-account tokens carry the bare "<shop>" and have no `iss`.
+  const dest = typeof claims.dest === "string" ? claims.dest.replace(/^https:\/\//i, "").replace(/\/+$/, "").toLowerCase() : null;
+  if (dest !== opts.shopDomain.toLowerCase()) return { ok: false, reason: "wrong shop" };
   if (typeof claims.sub !== "string" || !claims.sub) return { ok: false, reason: "missing subject" };
-  if (typeof claims.iss !== "string") return { ok: false, reason: "missing issuer" };
   return { ok: true, claims: claims as SessionClaims };
 }
 

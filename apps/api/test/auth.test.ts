@@ -73,6 +73,14 @@ describe("session tokens (HS256 JWT)", () => {
     expect(verifySessionToken(mint(claims), opts)).toEqual({ ok: false, reason });
   });
 
+  it("accepts a customer-account token: bare shop domain in dest, no iss", () => {
+    const { iss: _iss, ...rest } = claims;
+    const cust = { ...rest, dest: SHOP, sub: "gid://shopify/Customer/5001" };
+    expect(verifySessionToken(signSessionToken(cust as SessionClaims, SECRET), opts)).toMatchObject({ ok: true });
+    expect(verifySessionToken(signSessionToken({ ...cust, dest: "evil.myshopify.com" } as SessionClaims, SECRET), opts)).toEqual({ ok: false, reason: "wrong shop" });
+    expect(verifySessionToken(signSessionToken({ ...cust, dest: `${SHOP}.evil.com` } as SessionClaims, SECRET), opts)).toEqual({ ok: false, reason: "wrong shop" });
+  });
+
   it("rejects alg=none and tampered payloads", () => {
     const b = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
     expect(verifySessionToken(`${b({ alg: "none" })}.${b(claims)}.`, opts)).toMatchObject({ ok: false });
