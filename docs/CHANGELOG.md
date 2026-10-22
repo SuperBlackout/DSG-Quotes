@@ -3,6 +3,7 @@
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
 ## 2026-10-22
+- Storefront: "Add to Quote" buttons now feed the real quote module; /pages/quote is a themed list + quote detail (theme-overrides/). Built in a review copy of the theme, not yet published.
 - Worker/cron: `EMAIL_LOG_ONLY=1` lets production start with emails printed to the log (no Postmark yet). Without it a missing token is still fatal.
 - Admin: fixed Settings crash ("reading value of null") by reading input values before state updaters run.
 - Admin editor: price/qty fields no longer reformat while typing (typing "2" no longer jumps to "2.00" with the cursor at the end).
