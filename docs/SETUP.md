@@ -51,7 +51,7 @@ shopify app init --template=reactRouter --name dsg-quotes   # TypeScript, link t
 ## 5. Twilio (start immediately, approval takes days to weeks)
 - [ ] Create a Twilio account and upgrade it. Register the business in **Trust Hub** (Customer Profile).
 - [ ] Register an **A2P 10DLC Brand** and **Campaign** (use case: Account notifications / Customer care). Provide the opt-in consent text used in the My Quotes notification page, sample messages, privacy policy and terms URLs.
-- [ ] Confirm these URLs exist and load (open them in a browser) before submitting: Terms `https://dsg.direct/policies/terms-of-service` and Privacy `https://dsg.direct/policies/privacy-policy`. The path is `/policies/privacy-policy`, not `/privacy`. If either 404s, publish the policy in Shopify (Settings > Policies) first; a campaign with dead URLs is rejected.
+- [ ] Confirm these URLs exist and load (open them in a browser) before submitting: Terms `https://dsg.direct/pages/terms-and-conditions#sms-terms` (page "Terms & Conditions", SMS Terms section) and Privacy `https://dsg.direct/pages/privacy-policy#sms` (page "Privacy Policy", Text messaging section, includes the "We do not sell or share your SMS opt-in data..." statement). These are the same links shown beside the consent checkbox (`extensions/my-quotes/src/lib/consent.ts`). Do not use Shopify's `/policies/terms-of-service` (404s) or `/policies/privacy-policy` (different document). A campaign with dead URLs is rejected.
 - [ ] Buy a local number (or toll-free + verification), attach it to a **Messaging Service**, link the Campaign.
 - [ ] Set the Messaging Service inbound webhook to `https://<web>/hooks/twilio-inbound`. Copy SID/token/Service SID to Render.
 - [ ] Until approved, test SMS only to verified numbers.
