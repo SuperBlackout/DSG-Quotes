@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SMS_CONSENT_TEXT, consentPayload } from "../src/lib/consent";
+import { PRIVACY_URL, SMS_CONSENT_TEXT, TERMS_URL, consentPayload } from "../src/lib/consent";
 import {
   EVENT_DEFS,
   EVENT_KEYS,
@@ -30,6 +30,11 @@ describe("SMS consent text", () => {
     for (const phrase of ["DSG Distributors", "Msg frequency varies", "Msg & data rates may apply", "Reply STOP", "HELP"]) {
       expect(SMS_CONSENT_TEXT).toContain(phrase);
     }
+  });
+
+  it("links to the published SMS Terms and SMS Privacy sections cited in the A2P campaign", () => {
+    expect(TERMS_URL).toBe("https://dsg.direct/pages/terms-and-conditions#sms-terms");
+    expect(PRIVACY_URL).toBe("https://dsg.direct/pages/privacy-policy#sms");
   });
 
   it("is sent with the opt-in, and only with the opt-in", () => {

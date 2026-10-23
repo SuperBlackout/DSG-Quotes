@@ -5,10 +5,12 @@
 export const SMS_CONSENT_TEXT =
   "I agree to receive quote alerts by text from DSG Distributors. Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out, HELP for help.";
 
-// Shopify's default policy paths on the storefront domain. The mockup shows "Terms" and "Privacy"
-// links with no URL; confirm these resolve on dsg.direct before launch.
-export const TERMS_URL = "https://dsg.direct/policies/terms-of-service";
-export const PRIVACY_URL = "https://dsg.direct/policies/privacy-policy";
+// The published SMS sections on dsg.direct. These are the same URLs cited in the A2P 10DLC campaign
+// registration: Terms & Conditions (SMS Terms section) and Privacy Policy (Text messaging section).
+// Shopify's default /policies/* paths are NOT used (terms-of-service 404s; privacy-policy is a
+// different document without the SMS statement).
+export const TERMS_URL = "https://dsg.direct/pages/terms-and-conditions#sms-terms";
+export const PRIVACY_URL = "https://dsg.direct/pages/privacy-policy#sms";
 
 /** What to put in PUT /c/notification-prefs for the consent fields. */
 export function consentPayload(optedIn: boolean): { smsOptIn: boolean; smsConsentText?: string } {
