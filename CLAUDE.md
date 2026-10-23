@@ -55,7 +55,7 @@ shopify app deploy          # ships extensions + app config (lead only, at phase
 7. **Validate every GraphQL operation** against the pinned schema before committing
    (`pnpm -F api graphql:validate`).
 8. No real customer data or production keys in code, tests or fixtures. Use the dev store.
-9. Account pages (`/a`): Zoho access is READ-ONLY (never add a Zoho write call or non-READ scope); a buyer is identified only by the verified session token -> company -> `account_map` (never accept a customer id from the client); every statement query is scoped by `zoho_customer_id`.
+9. Account pages (`/a`): Zoho access is READ-ONLY (never add a Zoho write call or non-READ scope); a buyer is identified only by the verified session token on `/a`, or Shopify's signed app proxy `logged_in_customer_id` on `/proxy/a`, -> company -> `account_map` (never accept an unsigned customer id from the client); every statement query is scoped by `zoho_customer_id`.
 10. Code only against `packages/shared` types and `docs/openapi.yaml`. Need a contract change? Open a
    PR touching only `docs/` / `packages/shared/` and tag the lead.
 

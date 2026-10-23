@@ -53,7 +53,11 @@ export class ShopifyBuyerResolver implements BuyerResolver {
   }
 
   async resolve(authorizationHeader: string | undefined): Promise<Buyer> {
-    const customerGid = await this.verify(authorizationHeader);
+    return this.resolveCustomer(await this.verify(authorizationHeader));
+  }
+
+  async resolveCustomer(customerGid: string): Promise<Buyer> {
+    if (!CUSTOMER_GID.test(customerGid)) throw deny401();
     const look = await this.lookup(customerGid);
     if ('denied' in look) throw deny403();
     const row = await this.o.accountMap.getByShopifyCompanyId(look.companyId);

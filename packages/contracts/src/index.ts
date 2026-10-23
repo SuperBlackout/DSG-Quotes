@@ -147,7 +147,16 @@ export interface Buyer {
   zohoCustomerId: string;
   customerNumber: string;
 }
-export interface BuyerResolver { resolve(authorizationHeader: string | undefined): Promise<Buyer>; }
+export interface BuyerResolver {
+  /** Customer-account session token (Authorization: Bearer ...) -> buyer. */
+  resolve(authorizationHeader: string | undefined): Promise<Buyer>;
+  /**
+   * Customer GID already verified by the caller (Shopify's signed app proxy `logged_in_customer_id`) -> buyer.
+   * Applies the same company / role / account_map / customer-number checks as `resolve`. The caller MUST have verified
+   * the signature; never pass a value that came from the client unsigned.
+   */
+  resolveCustomer(customerGid: string): Promise<Buyer>;
+}
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
