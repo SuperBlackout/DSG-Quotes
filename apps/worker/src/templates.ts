@@ -194,34 +194,34 @@ export function renderSms(c: TemplateCtx): string {
   let body: string;
   switch (c.template) {
     case "submitted":
-      body = forSales ? `DSG Quotes: ${clip(c.customerName || "A customer", 24)} submitted ${q}.` : `DSG Quotes: we received your request ${q}. A rep will send pricing soon.`;
+      body = forSales ? `DSG Distributors LLC: ${clip(c.customerName || "A customer", 24)} submitted ${q}.` : `DSG Distributors LLC: we received your request ${q}. A rep will send pricing soon.`;
       break;
     case "quote_ready":
-      body = `DSG Quotes: ${q}${c.version > 1 ? ` v${c.version}` : ""} is ready${total ? ` (${total})` : ""}.`;
+      body = `DSG Distributors LLC: ${q}${c.version > 1 ? ` v${c.version}` : ""} is ready${total ? ` (${total})` : ""}.`;
       break;
     case "new_message": {
       const msgs = c.messages ?? [];
       const last = msgs[msgs.length - 1];
       body =
         msgs.length > 1
-          ? `DSG Quotes: ${msgs.length} new messages on ${q}.`
-          : `DSG Quotes: ${last ? `${clip(last.author, 20)}: ${clip(last.body.replace(/\s+/g, " "), 70)}` : `new message on ${q}`}`;
+          ? `DSG Distributors LLC: ${msgs.length} new messages on ${q}.`
+          : `DSG Distributors LLC: ${last ? `${clip(last.author, 20)}: ${clip(last.body.replace(/\s+/g, " "), 70)}` : `new message on ${q}`}`;
       break;
     }
     case "changes_requested":
-      body = `DSG Quotes: ${clip(c.customerName || "Customer", 24)} requested changes on ${q}.`;
+      body = `DSG Distributors LLC: ${clip(c.customerName || "Customer", 24)} requested changes on ${q}.`;
       break;
     case "accepted":
-      body = forSales ? `DSG Quotes: ${q} was accepted${total ? ` (${total})` : ""}.` : `DSG Quotes: you accepted ${q}. Buy now to lock in prices.`;
+      body = forSales ? `DSG Distributors LLC: ${q} was accepted${total ? ` (${total})` : ""}.` : `DSG Distributors LLC: you accepted ${q}. Buy now to lock in prices.`;
       break;
     case "ordered":
-      body = forSales ? `DSG Quotes: order placed from ${q}.` : `DSG Quotes: your order from ${q} is confirmed.`;
+      body = forSales ? `DSG Distributors LLC: order placed from ${q}.` : `DSG Distributors LLC: your order from ${q} is confirmed.`;
       break;
     case "floor_approval":
-      body = `DSG Quotes: ${clip(c.floor?.requester ?? "A rep", 20)} requests floor approval on ${q}.`;
+      body = `DSG Distributors LLC: ${clip(c.floor?.requester ?? "A rep", 20)} requests floor approval on ${q}.`;
       break;
     case "expiring":
-      body = c.expired ? `DSG Quotes: ${q} has expired.` : `DSG Quotes: ${q} expires${exp ? ` ${exp}` : " in 3 days"}.`;
+      body = c.expired ? `DSG Distributors LLC: ${q} has expired.` : `DSG Distributors LLC: ${q} expires${exp ? ` ${exp}` : " in 3 days"}.`;
       break;
   }
   return `${body} ${c.link}`;

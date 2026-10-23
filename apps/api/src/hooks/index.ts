@@ -167,7 +167,7 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
 
       const keyword = smsKeyword(text);
       if (keyword === "HELP") {
-        return twiml(`DSG Quotes: quote alerts from DSG Distributors. Reply STOP to opt out. Msg&data rates may apply. Help: ${opts.supportPhone ?? opts.supportEmail ?? "quotes@dsg.direct"}`);
+        return twiml(`DSG Distributors LLC: SMS notifications for quotes, orders, shipping updates, and related customer communications. Message frequency varies. Message and data rates may apply. Reply STOP to opt out. Help: ${opts.supportPhone ?? opts.supportEmail ?? "quotes@dsg.direct"}`);
       }
 
       const out = await deps.prisma.$transaction(async (tx) => {
@@ -223,8 +223,8 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
 
       if (out.kind === "stop") return twiml(); // Twilio's Advanced Opt-Out sends the carrier-required confirmation itself
       if (out.kind === "confirmed") return twiml(WELCOME_TEXT);
-      if (out.kind === "start") return twiml("DSG Quotes: to turn text alerts back on, open My Quotes > Notification settings and confirm your number.");
-      if (out.kind === "no_context") return twiml("DSG Quotes: we could not match your text to a quote. Please reply from My Quotes on dsg.direct.");
+      if (out.kind === "start") return twiml("DSG Distributors LLC: to turn text alerts back on, open My Quotes > Notification settings and confirm your number.");
+      if (out.kind === "no_context") return twiml("DSG Distributors LLC: we could not match your text to a quote. Please reply from My Quotes on dsg.direct.");
       return twiml();
     });
   }

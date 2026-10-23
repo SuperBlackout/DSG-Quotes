@@ -51,6 +51,8 @@ describe("opt-in request text", () => {
     expect(m.body).toContain("Rita Rep");
     expect(m.body).toMatch(/YES/);
     expect(m.body).toMatch(/STOP/);
+    expect(m.body).toMatch(/^DSG Distributors LLC:/);
+    expect(m.body).toContain("Message and data rates may apply");
     expect((await ctx.prisma.quoteRecipient.findUniqueOrThrow({ where: { id: r.id } })).optInRequestedAt).not.toBeNull();
     expect(await sendOptInRequests(ctx.deps)).toBe(0); // not again until the rep presses Resend
     expect(await ctx.prisma.notificationLog.count({ where: { quoteId: quote.id, to: PHONE2, status: "SENT" } })).toBe(1);

@@ -192,6 +192,8 @@ describe("POST /hooks/twilio-inbound", () => {
     const r = await sms({ From: PHONE, Body: "HELP" });
     expect(r.body).toContain("<Message>");
     expect(r.body).toContain("STOP");
+    expect(r.body).toContain("DSG Distributors LLC");
+    expect(r.body).toContain("Message and data rates may apply");
     expect(await ctx.prisma.message.count({ where: { quoteId: q.id } })).toBe(0);
     expect((await ctx.prisma.notificationPref.findFirstOrThrow({ where: { customerId: CUSTOMER } })).smsOptInAt).not.toBeNull();
   });

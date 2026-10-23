@@ -20,8 +20,8 @@ export async function sendOptInRequests(deps: WorkerDeps): Promise<number> {
       await deps.prisma.notificationLog.create({ data: { quoteId: quote.id, channel: "SMS", to: r.address, status: "SKIPPED_OPTED_OUT", providerId: null, createdAt: now } });
       continue;
     }
-    const who = r.addedByName ? `${r.addedByName} at DSG Distributors` : "DSG Distributors";
-    const body = `${who} wants to text you updates about quote Q-${quote.number}. Reply YES to confirm. Reply STOP to opt out. Msg&data rates may apply.`;
+    const who = r.addedByName ? `${r.addedByName} wants` : "We want";
+    const body = `DSG Distributors LLC: ${who} to text you updates about quote Q-${quote.number}. Message frequency varies. Message and data rates may apply. Reply YES to confirm, HELP for help or STOP to opt out.`;
     try {
       const res = await deps.sms.send({ to: r.address, body });
       await deps.prisma.notificationLog.create({ data: { quoteId: quote.id, channel: "SMS", to: r.address, status: "SENT", providerId: res.providerId, createdAt: now } });
