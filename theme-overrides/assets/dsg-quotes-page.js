@@ -62,7 +62,7 @@
     const editable = !!a.canEditLines;
     let h = '<p><a href="' + esc(location.pathname) + '">← All quotes</a></p>';
     h += '<div class="mq-title"><h2>' + esc(num(q)) + ' · ' + esc(q.title || '') + '</h2><div>' + badge(q.status) + ' <span class="t-small">' + esc(WAIT[q.waitingOn] || '') + '</span></div></div>';
-    if (notice) h += '<p class="mq-notice" role="status">' + notice + '</p>';
+    if (notice) h += '<p class="mq-notice" role="status" tabindex="-1">' + esc(notice) + '</p>';
     h += '<p data-err class="mq-error" role="alert" hidden></p>';
     h += '<dl class="mq-meta"><div><dt>PO number</dt><dd>' + esc(q.poNumber || (q.job && q.job.poNumber) || '—') + '</dd></div><div><dt>Job</dt><dd>' + esc((q.job && q.job.name) || '—') + '</dd></div><div><dt>Needed by</dt><dd>' + esc(date(q.neededBy)) + '</dd></div><div><dt>Quote expires</dt><dd>' + esc(date(q.expiresAt)) + '</dd></div><div><dt>DSG rep</dt><dd>' + esc(q.assignedRepName || '—') + '</dd></div></dl>';
 
@@ -123,14 +123,28 @@
       notice = doneMsg || '';
       if (!out || !out.lines) await reload(); else renderDetail();
       if (doneMsg) toast(doneMsg);
+      focusNotice();
     } catch (err) {
       if (err.status === 401) return loginRedirect();
       if (btn) { btn.disabled = false; btn.textContent = label; }
-      if (err.code === 'VERSION_MISMATCH') { notice = 'DSG sent a newer version while you were looking. Please review it before accepting.'; await reload(); }
-      else if (err.code === 'NOT_PURCHASABLE') showErr(err.message + ' You can ask for a new quote based on this one.'), root.querySelector('.mq-actions') && root.querySelector('.mq-actions').insertAdjacentHTML('beforeend', '<button type="button" class="btn btn--primary" data-act="duplicate">Ask for a new quote</button>');
-      else showErr(err.message);
+      if (err.code === 'VERSION_MISMATCH') {
+        notice = 'DSG sent a newer version while you were looking. Please review it before accepting.';
+        try { await reload(); focusNotice(); } catch (e2) { if (e2.status === 401) return loginRedirect(); showErr(e2.message); }
+      }
+      else if (err.code === 'NOT_PURCHASABLE') {
+        showErr(err.message + ' You can ask for a new quote based on this one.');
+        const bar = root.querySelector('.mq-actions');
+        if (bar && !bar.querySelector('[data-act="duplicate"]')) bar.insertAdjacentHTML('beforeend', '<button type="button" class="btn btn--primary" data-act="duplicate">Ask for a new quote</button>');
+      }
+      else {
+        // a failed quantity edit leaves the typed number on screen: redraw so the saved quantity comes back
+        if (!btn && Q) renderDetail();
+        showErr(err.message);
+      }
     } finally { busy = false; }
   }
+  /** After an action re-renders the page the focused button is gone: move focus to the result message so keyboard and screen-reader users land on it. */
+  function focusNotice() { const n = root.querySelector('.mq-notice'); if (n && n.focus) n.focus({ preventScroll: false }); }
   async function reload() { Q = await call('GET', '/c/quotes/' + encodeURIComponent(quoteId)); renderDetail(); }
 
   root.addEventListener('click', e => {
@@ -143,12 +157,20 @@
       return run(b, () => call('POST', '/c/quotes/' + id + '/submit', body), 'Sent to DSG. A rep will price it and reply here and by email.');
     }
     if (act === 'accept') return run(b, () => call('POST', '/c/quotes/' + id + '/accept', { versionNo: Q.currentVersion }), 'Accepted. You can now buy it.');
-    if (act === 'buy') return run(b, async () => { const r = await call('POST', '/c/quotes/' + id + '/checkout'); location.href = r.invoiceUrl; return new Promise(() => {}); });
+    if (act === 'buy') return run(b, async () => {
+      const r = await call('POST', '/c/quotes/' + id + '/checkout');
+      if (!r || !r.invoiceUrl) throw new Error('We could not start checkout. Please try again, or message your DSG rep.');
+      location.href = r.invoiceUrl; return new Promise(() => {});
+    });
     if (act === 'reopen') return run(b, () => call('POST', '/c/quotes/' + id + '/reopen'), 'Sent back to DSG for changes.');
     if (act === 'withdraw') return run(b, () => call('POST', '/c/quotes/' + id + '/withdraw'), 'Withdrawn. You can edit it now.');
     if (act === 'decline') return run(b, () => call('POST', '/c/quotes/' + id + '/decline', {}), 'Quote declined.');
     if (act === 'delete') return run(b, async () => { await call('DELETE', '/c/quotes/' + id); location.href = location.pathname; return new Promise(() => {}); });
-    if (act === 'duplicate') return run(b, async () => { const n = await call('POST', '/c/quotes/' + id + '/duplicate'); location.href = location.pathname + '?id=' + encodeURIComponent(n.id); return new Promise(() => {}); });
+    if (act === 'duplicate') return run(b, async () => {
+      const n = await call('POST', '/c/quotes/' + id + '/duplicate');
+      if (!n || !n.id) throw new Error('We could not copy this quote. Please try again.');
+      location.href = location.pathname + '?id=' + encodeURIComponent(n.id); return new Promise(() => {});
+    });
     if (act === 'changes') {
       if (!val('changes')) return showErr('Tell DSG what you would like changed.');
       return run(b, () => call('POST', '/c/quotes/' + id + '/request-changes', { message: val('changes') }), 'Sent. DSG will send you a new version.');
@@ -161,6 +183,7 @@
   root.addEventListener('change', e => {
     const i = e.target.closest('[data-qty]'); if (!i || !Q) return;
     const qty = Math.max(1, parseInt(i.value, 10) || 1);
+    if (busy) { renderDetail(); return; } // another save is in flight: show the saved quantity instead of an unsaved number
     run(null, () => call('PATCH', '/c/quotes/' + encodeURIComponent(Q.id) + '/lines/' + encodeURIComponent(i.dataset.qty), { qty }), 'Quantity updated');
   });
 

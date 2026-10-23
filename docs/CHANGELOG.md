@@ -3,6 +3,8 @@
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
 ## 2026-10-23
+- Storefront `/pages/quote` (theme-overrides/dsg-quotes-page.js) QA fixes: result notice is now HTML-escaped and receives focus after every action (keyboard/screen-reader users no longer lose their place); a checkout or duplicate response without a URL/id shows an error instead of navigating to "undefined"; a failed newer-version reload after VERSION_MISMATCH no longer throws unhandled; "Ask for a new quote" no longer duplicates on repeated failures; a failed or ignored quantity edit redraws the saved quantity. Adds `tests/quote-blocks/tests/quote-page.test.cjs` (5 jsdom tests; 4 fail on the old script). Storefront suite: 34 pass.
+- My Quotes notifications: the Terms and Privacy links beside the SMS consent checkbox now point to the published SMS sections (`https://dsg.direct/pages/terms-and-conditions#sms-terms`, `https://dsg.direct/pages/privacy-policy#sms`). The old `/policies/terms-of-service` link 404'd. Consent wording, checkbox behavior and saved data unchanged. Needs `shopify app deploy` to go live.
 - Account pages: **Account statement** and **Account info** customer-account extensions moved into this app from the standalone `dsg-account` app (Zoho Books read-only cache, session-token identity, single-use PDF links), served by `dsg-quotes-web` under `/a` and `POST /webhooks/zoho`, nightly sync in `dsg-quotes-cron`. Off until the four `ZOHO_*` credentials are set. New packages `contracts`, `zoho`, `statement`, `identity`, `testkit`, `account-client`; migration `20261023000000_statement_tables`; `pnpm -F api add-mapping`. See `docs/ACCOUNT-PAGES.md`.
 
 ## 2026-10-22
