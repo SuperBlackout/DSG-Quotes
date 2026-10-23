@@ -6,6 +6,34 @@
   if (!root) return;
   const BASE = '/apps/quotes';
   const quoteId = new URLSearchParams(location.search).get('id');
+
+  const POLISH = `
+.mq-row{border-radius:8px;padding-inline:8px}
+a.mq-link{transition:background .12s}
+a.mq-link:hover,a.mq-link:focus-visible{background:rgba(14,29,43,.05)}
+a.mq-link:focus-visible,.mq-qty:focus-visible{outline:2px solid #2f6ea8;outline-offset:2px}
+.mq-sub{display:block;font-size:.8rem;color:var(--muted,#5b6773);margin-top:2px}
+.mq-badge[data-s=SUBMITTED],.mq-badge[data-s=IN_REVIEW]{background:#fff3d6;color:#6b4a00}
+.mq-badge[data-s=DRAFT]{background:#eceff3;color:#3b4652}
+.mq-badge[data-s=ORDERED]{background:#e1e9fb;color:#1e3a8a}
+.mq-empty{text-align:center;padding:36px 12px;display:grid;gap:10px;justify-items:center}
+.mq-empty h3{margin:0}.mq-empty p{margin:0;max-width:46ch;color:var(--muted,#5b6773)}
+.mq-next{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px solid #c9dcef;background:#eef4fb;border-radius:10px;padding:14px 16px;margin:14px 0}
+.mq-next[data-tone=go]{background:#e8f6ec;border-color:#b6dfc2}
+.mq-next[data-tone=warn]{background:#fff6e0;border-color:#f0d9a0}
+.mq-next[data-tone=bad]{background:#fdf0ee;border-color:#f1c4bf}
+.mq-next strong{display:block;font-size:1.02rem}.mq-next span{font-size:.9rem;color:#33414f}
+.mq-msg--sys{background:transparent;border:1px dashed var(--line,#d9dee5);font-size:.9rem;max-width:100%}
+.mq-lines .mq-item strong{font-weight:600}
+@media (max-width:720px){
+ .mq-row{border:1px solid var(--line,#d9dee5);border-radius:10px;margin-bottom:10px;padding:12px;gap:8px 12px}
+ .mq-row:first-child{border-top:1px solid var(--line,#d9dee5)}
+ .mq-row [data-l]::before{content:attr(data-l);display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#5b6773)}
+ .mq-line{border:1px solid var(--line,#d9dee5);border-radius:10px;margin-bottom:8px;padding:10px}
+ .mq-line [data-l]::before{content:attr(data-l);display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#5b6773)}
+ .mq-actions .btn{flex:1 1 100%}.mq-next .btn{width:100%}
+}`;
+  document.head.appendChild(Object.assign(document.createElement('style'), { textContent: POLISH }));
   const LABEL = { DRAFT: 'Draft', SUBMITTED: 'Sent to DSG', IN_REVIEW: 'In review', QUOTE_READY: 'Ready for you', CHANGES_REQUESTED: 'Changes requested', ACCEPTED: 'Accepted', ORDERED: 'Ordered', EXPIRED: 'Expired', DECLINED: 'Declined', WITHDRAWN: 'Withdrawn' };
   const WAIT = { customer: 'Waiting on you', sales: 'DSG is working on it', none: '' };
 
@@ -14,6 +42,21 @@
   const date = s => { if (!s) return '—'; const d = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + 'T12:00:00') : new Date(s); return isNaN(d) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
   const when = s => { const d = new Date(s); return isNaN(d) ? '' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   const num = q => q.displayNumber || (q.number ? 'Q-' + q.number : 'Quote');
+
+  /* Product titles sometimes repeat the brand ("InVid InVid TPW-4"): collapse an immediately repeated leading word run. */
+  const cleanTitle = t => String(t || '').replace(/^(\S+(?:\s+\S+){0,2}?)\s+\1(?=\s|$)/i, '$1');
+  const NEXT = {
+    DRAFT: ['Draft: not sent yet', 'Review your items, then send it to DSG for pricing.', 'info'],
+    SUBMITTED: ['Sent to DSG', 'A rep will price it, usually the same business day. We will email you when it is ready.', 'warn'],
+    IN_REVIEW: ['DSG is pricing your quote', 'You will get an email when it is ready. You can message your rep below.', 'warn'],
+    QUOTE_READY: ['Your quote is ready', 'Review the prices, then accept it to buy at these prices.', 'go'],
+    CHANGES_REQUESTED: ['Changes requested', 'DSG is updating the quote and will send you a new version.', 'warn'],
+    ACCEPTED: ['Accepted: ready to buy', 'Buy now to lock these prices before the quote expires.', 'go'],
+    ORDERED: ['Ordered', 'This quote has been turned into an order.', 'info'],
+    EXPIRED: ['This quote expired', 'Prices may have changed. Ask for a new quote based on this one.', 'bad'],
+    DECLINED: ['Declined', 'You declined this quote.', 'bad'],
+    WITHDRAWN: ['Withdrawn', 'You withdrew this quote. You can edit it and send it again.', 'bad']
+  };
   const badge = s => '<span class="mq-badge" data-s="' + esc(s) + '">' + esc(LABEL[s] || s) + '</span>';
   const toast = (t, b) => { if (window.DSGUI && window.DSGUI.toast) window.DSGUI.toast(t, b || ''); };
 
@@ -35,13 +78,13 @@
 
   /* ------------------------------------------------------------------ list */
   function renderList(items) {
-    if (!items.length) { root.innerHTML = '<p>You have no quotes yet. Use “Add to Quote” on any product, or move your cart to a quote.</p>'; return; }
+    if (!items.length) { root.innerHTML = '<div class="mq-empty"><h3>No quotes yet</h3><p>Use “Add to Quote” on any product page, or move everything in your cart to a quote. A DSG rep will price it and reply here.</p><p style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><a class="btn btn--primary" href="/cart">Move my cart to a quote</a><a class="btn btn--secondary" href="/search">Find products</a></p></div>'; return; }
     let h = '<div class="mq-row mq-head"><span>Quote</span><span>Status</span><span>Items</span><span>Total</span><span>Expires</span></div>';
     items.forEach(q => {
       const po = (q.job && q.job.poNumber) || q.poNumber;
       h += '<a class="mq-row mq-link" href="?id=' + encodeURIComponent(q.id) + '"><span><strong>' + esc(num(q)) + '</strong> · ' + esc(q.title || '') + (po ? '<br><span class="t-small">PO ' + esc(po) + '</span>' : '') + '</span>'
-        + '<span>' + badge(q.status) + (q.unreadCount ? ' <span class="mq-dot" title="New message"></span>' : '') + '<br><span class="t-small">' + esc(WAIT[q.waitingOn] || '') + '</span></span>'
-        + '<span>' + esc(q.lineCount || 0) + '</span><span class="t-num">' + esc(money(q.total, q.currencyCode)) + '</span><span>' + esc(date(q.expiresAt)) + '</span></a>';
+        + '<span data-l="Status">' + badge(q.status) + (q.unreadCount ? ' <span class="mq-dot" title="New message" aria-label="New message"></span>' : '') + '<span class="mq-sub">' + esc(WAIT[q.waitingOn] || '') + '</span></span>'
+        + '<span data-l="Items">' + esc(q.lineCount || 0) + '</span><span class="t-num" data-l="Total">' + esc(money(q.total, q.currencyCode)) + '</span><span data-l="Expires">' + esc(date(q.expiresAt)) + '</span></a>';
     });
     root.innerHTML = h;
   }
@@ -62,15 +105,20 @@
     const editable = !!a.canEditLines;
     let h = '<p><a href="' + esc(location.pathname) + '">← All quotes</a></p>';
     h += '<div class="mq-title"><h2>' + esc(num(q)) + ' · ' + esc(q.title || '') + '</h2><div>' + badge(q.status) + ' <span class="t-small">' + esc(WAIT[q.waitingOn] || '') + '</span></div></div>';
-    if (notice) h += '<p class="mq-notice" role="status">' + notice + '</p>';
+    if (notice) h += '<p class="mq-notice" role="status">' + esc(notice) + '</p>';
+    const nx = NEXT[q.status];
+    if (nx) {
+      const cta = a.canAccept ? '<button type="button" class="btn btn--primary" data-act="accept">Accept this quote</button>' : a.canBuy ? '<button type="button" class="btn btn--primary" data-act="buy">Buy now</button>' : '';
+      h += '<div class="mq-next" data-tone="' + nx[2] + '"><div><strong>' + esc(nx[0]) + '</strong><span>' + esc(nx[1]) + (q.expiresAt && (q.status === 'QUOTE_READY' || q.status === 'ACCEPTED') ? ' Expires ' + esc(date(q.expiresAt)) + '.' : '') + '</span></div>' + cta + '</div>';
+    }
     h += '<p data-err class="mq-error" role="alert" hidden></p>';
     h += '<dl class="mq-meta"><div><dt>PO number</dt><dd>' + esc(q.poNumber || (q.job && q.job.poNumber) || '—') + '</dd></div><div><dt>Job</dt><dd>' + esc((q.job && q.job.name) || '—') + '</dd></div><div><dt>Needed by</dt><dd>' + esc(date(q.neededBy)) + '</dd></div><div><dt>Quote expires</dt><dd>' + esc(date(q.expiresAt)) + '</dd></div><div><dt>DSG rep</dt><dd>' + esc(q.assignedRepName || '—') + '</dd></div></dl>';
 
     h += '<div class="mq-lines"><div class="mq-line mq-head"><span>Item</span><span>Qty</span><span>Price</span><span>Total</span></div>';
     (q.lines || []).forEach(l => {
-      h += '<div class="mq-line"><span class="mq-item">' + (l.imageUrl ? '<img src="' + esc(l.imageUrl) + '" alt="" width="48" height="48" loading="lazy">' : '') + '<span><strong>' + esc(l.title) + '</strong><br><span class="t-small">' + esc(l.sku || '') + '</span>' + (l.lineNote ? '<br><span class="t-small">' + esc(l.lineNote) + '</span>' : '') + '</span></span>'
-        + '<span>' + (editable ? '<input class="input mq-qty" type="number" min="1" value="' + esc(l.qty) + '" data-qty="' + esc(l.id) + '" aria-label="Quantity for ' + esc(l.title) + '"> <button type="button" class="btn btn--tertiary btn--sm" data-act="remove" data-line="' + esc(l.id) + '">Remove</button>' : esc(l.qty)) + '</span>'
-        + '<span class="t-num">' + esc(money(l.quotedPrice, cur)) + '</span><span class="t-num">' + esc(money(l.lineTotal, cur)) + '</span></div>';
+      h += '<div class="mq-line"><span class="mq-item">' + (l.imageUrl ? '<img src="' + esc(l.imageUrl) + '" alt="" width="48" height="48" loading="lazy">' : '') + '<span><strong>' + esc(cleanTitle(l.title)) + '</strong><br><span class="t-small">' + esc(l.sku || '') + '</span>' + (l.lineNote ? '<br><span class="t-small">' + esc(l.lineNote) + '</span>' : '') + '</span></span>'
+        + '<span data-l="Qty">' + (editable ? '<input class="input mq-qty" type="number" min="1" value="' + esc(l.qty) + '" data-qty="' + esc(l.id) + '" aria-label="Quantity for ' + esc(cleanTitle(l.title)) + '"> <button type="button" class="btn btn--tertiary btn--sm" data-act="remove" data-line="' + esc(l.id) + '">Remove</button>' : esc(l.qty)) + '</span>'
+        + '<span class="t-num" data-l="Price">' + esc(money(l.quotedPrice, cur)) + '</span><span class="t-num" data-l="Total">' + esc(money(l.lineTotal, cur)) + '</span></div>';
     });
     if (!(q.lines || []).length) h += '<p class="t-small" style="padding:12px 0">No items on this quote yet. Add products from the store.</p>';
     h += '</div>';
@@ -87,11 +135,9 @@
     if (ver && ver.repNote) h += '<div class="mq-repnote"><strong>Note from DSG</strong><br>' + esc(ver.repNote).replace(/\n/g, '<br>') + '</div>';
 
     if (a.canSubmit) {
-      h += '<section class="mq-panel"><h3>Send to DSG</h3><div class="mq-form"><label>PO number<input class="input" data-f="po" value="' + esc(q.poNumber || (q.job && q.job.poNumber) || '') + '"></label><label>Needed by<input class="input" type="date" data-f="needed" value="' + esc(q.neededBy || '') + '"></label><label class="mq-wide">Note to sales<textarea class="input" rows="3" data-f="note" placeholder="Quantities, timing, ship-to, anything the rep should know">' + esc(q.notesToSales || '') + '</textarea></label></div><p><button type="button" class="btn btn--primary" data-act="submit">Submit to sales</button></p></section>';
+      h += '<section class="mq-panel"><h3>Send to DSG</h3><div class="mq-form"><label>PO number<input class="input" data-f="po" value="' + esc(q.poNumber || (q.job && q.job.poNumber) || '') + '"></label><label>Needed by<input class="input" type="date" data-f="needed" value="' + esc(q.neededBy || '') + '"></label><label class="mq-wide">Note to sales<textarea class="input" rows="3" data-f="note" placeholder="Quantities, timing, ship-to, anything the rep should know">' + esc(q.notesToSales || '') + '</textarea></label></div><p><button type="button" class="btn btn--primary" data-act="submit">Send to DSG</button></p></section>';
     }
     let acts = '';
-    if (a.canAccept) acts += '<button type="button" class="btn btn--primary" data-act="accept">Accept this quote</button>';
-    if (a.canBuy) acts += '<button type="button" class="btn btn--primary" data-act="buy">Buy now</button>';
     if (a.canReopen) acts += '<button type="button" class="btn btn--secondary" data-act="reopen">Change before buying</button>';
     if (a.canWithdraw) acts += '<button type="button" class="btn btn--secondary" data-act="withdraw">' + (confirming === 'withdraw' ? 'Click again to withdraw' : 'Withdraw to edit') + '</button>';
     if (a.canDecline) acts += '<button type="button" class="btn btn--tertiary" data-act="decline">' + (confirming === 'decline' ? 'Click again to decline' : 'Decline') + '</button>';
@@ -103,7 +149,7 @@
     h += '<section class="mq-panel"><h3>Conversation with DSG</h3><div class="mq-msgs">';
     (q.messages || []).forEach(m => {
       const mine = m.authorType === 'CUSTOMER';
-      h += '<div class="mq-msg' + (mine ? ' mq-msg--me' : '') + '"><div class="t-small">' + esc(m.authorType === 'SYSTEM' ? 'DSG Quotes' : (m.authorName || (mine ? 'You' : 'DSG'))) + ' · ' + esc(when(m.createdAt)) + '</div><div>' + esc(m.body).replace(/\n/g, '<br>') + '</div></div>';
+      h += '<div class="mq-msg' + (mine ? ' mq-msg--me' : '') + (m.authorType === 'SYSTEM' ? ' mq-msg--sys' : '') + '"><div class="t-small">' + esc(m.authorType === 'SYSTEM' ? 'DSG Quotes' : (m.authorName || (mine ? 'You' : 'DSG'))) + ' · ' + esc(when(m.createdAt)) + '</div><div>' + esc(m.body).replace(/\n/g, '<br>') + '</div></div>';
     });
     if (!(q.messages || []).length) h += '<p class="t-small">No messages yet.</p>';
     h += '</div><textarea class="input" rows="2" data-f="msg" placeholder="Write a message to your DSG rep"></textarea><p><button type="button" class="btn btn--secondary" data-act="message">Send message</button></p></section>';
