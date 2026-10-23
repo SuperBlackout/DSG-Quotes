@@ -71,4 +71,4 @@ shopify app init --template=reactRouter --name dsg-quotes   # TypeScript, link t
 - [ ] Tell the lead; the lead then unblocks the builder agents that need live credentials.
 
 ## 9. Account pages (statement + account info)
-Optional; independent of quotes. Follow `docs/ACCOUNT-PAGES.md` (Zoho read-only credentials, `dsg-quotes-zoho` env group, `pnpm -F api add-mapping`, extension network access and menu entries).
+Optional; independent of quotes. Follow `docs/ACCOUNT-PAGES.md` (Zoho read-only credentials, `dsg-quotes-zoho` env group, `pnpm -F api add-mapping`, extension network access and menu entries). To also show the pages on the storefront (`/pages/statement`, `/pages/account-info`), follow the setup line for `dsg-account-pages.js` in `theme-overrides/README.md`.

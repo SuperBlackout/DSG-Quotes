@@ -43,6 +43,22 @@ customer account page --(Bearer session token)--> /a/v1/*  (dsg-quotes-web)
   draft and void documents are never shown; PDF links are single use, expire in 5 minutes, and are handed back if Zoho fails; per-customer rate limit
   of 60 requests a minute.
 
+## Storefront pages (`/pages/statement`, `/pages/account-info`)
+
+The same two pages are also available as normal pages in the dsg.direct theme, like `/pages/quote`, so dealers need not open the separate
+customer-account area. `theme-overrides/assets/dsg-account-pages.js` (one script, two views) calls the same routes through the Shopify app proxy:
+
+```
+theme page --(/apps/quotes/a/v1/*, signed by Shopify)--> /proxy/a/v1/*  (same handlers as /a/v1/*)
+```
+
+- **Identity on this mount** is only Shopify's app proxy HMAC (shop, timestamp freshness) plus the signed `logged_in_customer_id`. It goes through
+  `BuyerResolver.resolveCustomer`, which applies the identical company / Location admin / `account_map` / customer-number checks. The browser never
+  chooses the customer; a changed or extra query value breaks the signature. A session token is not accepted on `/proxy/a`, and a proxy signature is not
+  accepted on `/a`. No CORS headers on `/proxy/a`.
+- `/proxy/a` has no `/files/:token`: PDF links returned there point at `/a/files/<token>` (single use, 5 minutes), which opens as a normal page navigation.
+- Setup in Shopify (theme upload, two pages, menu links) is in `docs/SETUP.md` section 9 and `theme-overrides/README.md`.
+
 ## Database
 
 `apps/api/prisma/migrations/20261023000000_statement_tables` creates `account_map`, `zoho_contact`, `zoho_document`, `pdf_link`, `sync_event`,

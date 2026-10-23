@@ -8,6 +8,10 @@ import { PdfLinkService, StatementService, writeAudit } from "@dsg/statement";
 import { parseWebhook, verifyZohoWebhook } from "@dsg/statement";
 import { readCompanyProfile } from "@dsg/identity";
 import type { StatementDeps } from "./deps";
+import { verifyAppProxyRequest } from "../auth/crypto";
+
+/** Storefront (theme page) access: Shopify's signed app proxy request instead of a customer-account session token. */
+export interface ProxyAuth { apiSecret: string; shopDomain: string; maxAgeSeconds: number }
 
 /**
  * Account pages API for the customer-account extensions (account-statement, account-info).
@@ -53,6 +57,20 @@ function out<S extends z.ZodType>(schema: S, value: unknown): z.infer<S> {
   return r.data;
 }
 
+/**
+ * App proxy mount: the only credential is Shopify's HMAC over the query string. The customer is the signed
+ * `logged_in_customer_id` (empty when signed out), never anything the browser chose. Any failure is a generic 401.
+ */
+function proxyCustomer(req: FastifyRequest, p: ProxyAuth, at: Date): string {
+  const raw = req.raw.url?.includes("?") ? req.raw.url.slice(req.raw.url.indexOf("?") + 1) : "";
+  if (!new URLSearchParams(raw).has("signature")) throw new HttpError(401, "Unauthorized");
+  const v = verifyAppProxyRequest(raw, p.apiSecret, { now: at, maxAgeSeconds: p.maxAgeSeconds });
+  if (!v.ok || v.params.get("shop") !== p.shopDomain) throw new HttpError(401, "Unauthorized");
+  const id = v.params.get("logged_in_customer_id");
+  if (!id || !/^\d+$/.test(id)) throw new HttpError(401, "Unauthorized");
+  return `gid://shopify/Customer/${id}`;
+}
+
 declare module "fastify" {
   interface FastifyRequest { buyer?: Buyer }
 }
@@ -68,7 +86,7 @@ function install(app: FastifyInstance) {
   });
 }
 
-export async function statementRoutes(app: FastifyInstance, opts: { statement: StatementDeps; now: () => Date }) {
+export async function statementRoutes(app: FastifyInstance, opts: { statement: StatementDeps; now: () => Date; proxy?: ProxyAuth }) {
   const deps = opts.statement;
   const now = opts.now;
   install(app);
@@ -104,7 +122,7 @@ export async function statementRoutes(app: FastifyInstance, opts: { statement: S
       const action = `${req.method} ${req.routeOptions?.url ?? "unmatched"}`;
       let buyer: Buyer;
       try {
-        buyer = await deps.resolver.resolve(req.headers.authorization);
+        buyer = opts.proxy ? await deps.resolver.resolveCustomer(proxyCustomer(req, opts.proxy, now())) : await deps.resolver.resolve(req.headers.authorization);
       } catch (e) {
         if (e instanceof HttpError && e.status === 403) await audit(null, action, "denied").catch(() => {});
         throw e;
@@ -183,8 +201,8 @@ export async function statementRoutes(app: FastifyInstance, opts: { statement: S
     });
   }, { prefix: "" });
 
-  // ---- single-use PDF download (the token is the capability; no auth header)
-  app.get("/files/:token", async (req, reply) => {
+  // ---- single-use PDF download (the token is the capability; no auth header). Mounted once, under /a only.
+  if (!opts.proxy) app.get("/files/:token", async (req, reply) => {
     const tp = TokenParam.safeParse(req.params);
     if (!tp.success) throw new HttpError(404, "Not found");
     const token = tp.data.token;

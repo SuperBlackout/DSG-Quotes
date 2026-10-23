@@ -3,6 +3,7 @@
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
 ## 2026-10-23
+- Account pages on the storefront: `/pages/statement` and `/pages/account-info` in the dsg.direct theme (`theme-overrides/assets/dsg-account-pages.js`), same data and rules as the customer-account pages. New app-proxy mount `/proxy/a/*` (Shopify's signed `logged_in_customer_id` -> same company / Location admin / account_map checks via `BuyerResolver.resolveCustomer`); session tokens are not accepted there and proxy signatures are not accepted on `/a`. CLAUDE.md rule 9 now names both credentials.
 - Storefront theme: quote notification settings now live on the main site at `/pages/quote?view=notifications` (new `theme-overrides/assets/dsg-quote-notifications.js`, tabs on the quotes page), same data and consent wording as the customer-account page. Review theme only; add the account-menu link after the theme is published.
 - Storefront theme: polished `/pages/quote` (`theme-overrides/assets/dsg-quotes-page.js`). Next-step banner with Accept / Buy button, status colors, de-duplicated product names, mobile card layout with field labels, friendlier empty state, "Send to DSG" button. Uploaded to the review theme only.
 - Storefront: redesigned the cart "Move cart to quote" block. Full-width two-column card, required-field marker with inline error, cart item count and total, "what happens next" steps, "Send to sales" / "Save as draft" buttons, clearer success state, and "View quote" now opens `/pages/quote?id=` by default. Size budget raised to 34 KB.

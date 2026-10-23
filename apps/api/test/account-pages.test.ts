@@ -12,7 +12,8 @@ import { FakeAttachmentSigner } from "../src/attachments";
 import { createPrisma } from "../src/db";
 import type { StatementDeps } from "../src/statement/deps";
 import { FakeShopify } from "../src/shopify/fake";
-import { API_KEY, SHOP, testConfig, customerToken } from "./helpers";
+import { signAppProxyQuery } from "../src/auth/crypto";
+import { API_KEY, SHOP, SECRET, testConfig, customerToken } from "./helpers";
 
 /**
  * Account pages (/a): statement + account info for the customer-account extensions. Real routes, real Postgres
@@ -341,5 +342,79 @@ describe("POST /webhooks/zoho", () => {
     expect((await app.inject({ method: "POST", url: "/webhooks/zoho", headers: { ...headers, "x-zoho-webhook-signature": signWebhook(body, "wrong") }, payload: body })).statusCode).toBe(401);
     expect((await app.inject({ method: "POST", url: "/webhooks/zoho", headers: { ...headers, "x-zoho-webhook-signature": signWebhook(body, WEBHOOK_SECRET) }, payload: body + " " })).statusCode).toBe(401);
     expect(queued).toEqual([]);
+  });
+});
+
+
+describe("storefront pages through the app proxy (/proxy/a)", () => {
+  const signed = (path: string, q: Record<string, string> = {}, at = clock) =>
+    `/proxy/a${path}${path.includes("?") ? "&" : "?"}${signAppProxyQuery({ shop: SHOP, path_prefix: "/apps/quotes", ...q }, SECRET, at)}`;
+  const as = (customerNumericId: string, path: string, extra: Record<string, string> = {}) =>
+    app.inject({ method: "GET", url: signed(path, { logged_in_customer_id: customerNumericId, ...extra }) });
+
+  it("serves the same data as /a, for the signed-in customer only", async () => {
+    await syncBoth();
+    const viaProxy = await as("7001", "/v1/statement/summary");
+    const direct = await get("/a/v1/statement/summary", ADMIN_A);
+    expect(viaProxy.statusCode).toBe(200);
+    expect(StatementSummary.parse(viaProxy.json())).toEqual(StatementSummary.parse(direct.json()));
+    const b = await as("7002", "/v1/statement/summary");
+    expect(b.statusCode).toBe(200);
+    expect(b.json()).not.toEqual(viaProxy.json());
+    expect(ActivityPage.safeParse((await as("7001", "/v1/statement/activity")).json()).success).toBe(true);
+    const acct = await as("7001", "/v1/account");
+    expect(AccountInfo.parse(acct.json()).customerNumber).toBe(DEALER_A.number);
+  });
+  it("a customer id chosen by the browser changes nothing: it is never read", async () => {
+    await syncBoth();
+    const r = await as("7001", "/v1/statement/summary", { customer: "7002", zoho_customer_id: DEALER_B.zohoId, company: DEALER_B.companyId });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual((await as("7001", "/v1/statement/summary")).json());
+  });
+  it("401 without a signature, with a bad or tampered one, when stale, for another shop, or signed out", async () => {
+    await syncBoth();
+    const p = "/v1/statement/summary";
+    expect((await app.inject({ method: "GET", url: `/proxy/a${p}` })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: `/proxy/a${p}?logged_in_customer_id=7001&signature=deadbeef` })).statusCode).toBe(401);
+    const tampered = signed(p, { logged_in_customer_id: "7001" }).replace("logged_in_customer_id=7001", "logged_in_customer_id=7002");
+    expect((await app.inject({ method: "GET", url: tampered })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: signed(p, { logged_in_customer_id: "7001" }, new Date(clock.getTime() - 3600_000)) })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: signed(p, { logged_in_customer_id: "7001", shop: "other.myshopify.com" }) })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: signed(p, { logged_in_customer_id: "" }) })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: signed(p, { logged_in_customer_id: "not-a-number" }) })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: signed(p) })).statusCode).toBe(401);
+  });
+  it("keeps the company rules: plain member, unmapped company and two-company contact are 403", async () => {
+    await syncBoth();
+    for (const id of ["7003", "7004", "7005"]) expect((await as(id, "/v1/statement/summary")).statusCode, id).toBe(403);
+  });
+  it("does not accept a session token, and /a does not accept a proxy signature", async () => {
+    await syncBoth();
+    const r = await app.inject({ method: "GET", url: "/proxy/a/v1/statement/summary", headers: { authorization: `Bearer ${customerToken(ADMIN_A, clock)}` } });
+    expect(r.statusCode).toBe(401);
+    const q = signAppProxyQuery({ shop: SHOP, logged_in_customer_id: "7001" }, SECRET, clock);
+    expect((await app.inject({ method: "GET", url: `/a/v1/statement/summary?${q}` })).statusCode).toBe(401);
+  });
+  it("sends no CORS headers and issues PDF links that download from /a/files", async () => {
+    await syncBoth();
+    const r = await app.inject({ method: "GET", url: signed("/v1/statement/summary", { logged_in_customer_id: "7001" }), headers: { origin: "https://evil.test" } });
+    expect(r.headers["access-control-allow-origin"]).toBeUndefined();
+    const link = await app.inject({ method: "POST", url: signed("/v1/statement/pdf-link", { logged_in_customer_id: "7001" }), payload: {} });
+    expect(link.statusCode).toBe(200);
+    const url = PdfLink.parse(link.json()).url;
+    expect(url.startsWith("https://api.test/a/files/")).toBe(true);
+    const file = await app.inject({ method: "GET", url: url.replace("https://api.test", "") });
+    expect(file.statusCode).toBe(200);
+    expect(file.headers["content-type"]).toContain("application/pdf");
+    expect((await app.inject({ method: "GET", url: signed("/files/abcdefghijklmnopqrstuvwxyz", { logged_in_customer_id: "7001" }) })).statusCode).toBe(404);
+  });
+  it("invoice PDF link is scoped to the signed-in company", async () => {
+    await syncBoth();
+    const { rows } = await pool.query("select id from zoho_document where zoho_customer_id = $1 and kind = 'invoice' and source = 'zoho' limit 1", [DEALER_A.zohoId]);
+    const id = rows[0].id;
+    const ok = await app.inject({ method: "POST", url: signed(`/v1/invoices/${id}/pdf-link`, { logged_in_customer_id: "7001" }), payload: {} });
+    expect(ok.statusCode).toBe(200);
+    const other = await app.inject({ method: "POST", url: signed(`/v1/invoices/${id}/pdf-link`, { logged_in_customer_id: "7002" }), payload: {} });
+    expect(other.statusCode).toBe(404);
   });
 });

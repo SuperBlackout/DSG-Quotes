@@ -110,6 +110,12 @@ export async function buildApp(deps: AppDeps, opts: BuildOptions = {}): Promise<
   await app.register(webhookRoutes, { prefix: "/webhooks" });
   if (deps.statement) {
     await app.register(statementRoutes, { prefix: "/a", statement: deps.statement, now: deps.now });
+    // Storefront pages (/pages/statement, /pages/account-info) reach the same routes through the app proxy
+    // (/apps/quotes/a/* -> /proxy/a/*), authenticated by Shopify's signed request instead of a session token.
+    await app.register(statementRoutes, {
+      prefix: "/proxy/a", statement: deps.statement, now: deps.now,
+      proxy: { apiSecret: deps.config.apiSecret, shopDomain: deps.config.shopDomain, maxAgeSeconds: deps.config.signatureMaxAgeSeconds },
+    });
     await app.register(zohoWebhookRoutes, { prefix: "/webhooks", statement: deps.statement });
   }
   if (hooksEnabled()) await app.register(hookRoutes, { prefix: "/hooks", ...hookOptionsFromEnv(deps.config.apiSecret) });
