@@ -7,6 +7,8 @@
   if routes.account_login_url contains '?'
     assign sep = '&'
   endif
+  assign quotes_url_default = '/pages/quote?id={id}'
+  assign my_quotes_url = block.settings.my_quotes_url | default: quotes_url_default
   assign login_url = routes.account_login_url | append: sep | append: 'return_url=' | append: request.path | url_encode
 -%}
 <div
@@ -17,7 +19,7 @@
   data-currency="{{ cart.currency.iso_code }}"
   data-heading="{{ block.settings.heading | escape }}"
   data-subheading="{{ block.settings.subheading | escape }}"
-  data-my-quotes-url="{{ block.settings.my_quotes_url | default: '/pages/quote?id={id}' }}"
+  data-my-quotes-url="{{ my_quotes_url }}"
   data-base="/apps/quotes"
   {% if block.settings.accent != blank %}style="--dsg-accent: {{ block.settings.accent }}; --dsg-on-accent: {{ block.settings.on_accent | default: '#ffffff' }}"{% endif %}
   {{ block.shopify_attributes }}

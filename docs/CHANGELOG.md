@@ -3,6 +3,7 @@
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
 ## 2026-10-23
+- Storefront: fixed a Liquid syntax error in `move-cart-to-quote.liquid` (a `}` inside `{{ }}` ended the tag early) that made `shopify app deploy` reject the whole version. Rendered output is unchanged.
 - Storefront theme: quote notification settings now live on the main site at `/pages/quote?view=notifications` (new `theme-overrides/assets/dsg-quote-notifications.js`, tabs on the quotes page), same data and consent wording as the customer-account page. Review theme only; add the account-menu link after the theme is published.
 - Storefront theme: polished `/pages/quote` (`theme-overrides/assets/dsg-quotes-page.js`). Next-step banner with Accept / Buy button, status colors, de-duplicated product names, mobile card layout with field labels, friendlier empty state, "Send to DSG" button. Uploaded to the review theme only.
 - Storefront: redesigned the cart "Move cart to quote" block. Full-width two-column card, required-field marker with inline error, cart item count and total, "what happens next" steps, "Send to sales" / "Save as draft" buttons, clearer success state, and "View quote" now opens `/pages/quote?id=` by default. Size budget raised to 34 KB.
