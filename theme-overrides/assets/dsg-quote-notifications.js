@@ -1,9 +1,9 @@
-/* DSG: "Quote notifications" on the storefront (/pages/quote?view=notifications). Same settings as the customer-account
+/* DSG: "Quote notifications" on the storefront (/pages/quote?tab=notifications). Same settings as the customer-account
    page (GET/PUT /apps/quotes/c/notification-prefs), reachable from the account menu. Signed-in dealers only. */
 (() => {
   'use strict';
   const root = document.querySelector('[data-mq]');
-  if (!root || new URLSearchParams(location.search).get('view') !== 'notifications') return;
+  if (!root || new URLSearchParams(location.search).get('tab') !== 'notifications') return;
   const BASE = '/apps/quotes';
   // Verbatim: this is the wording recorded with the opt-in (A2P 10DLC campaign). Change only together with the campaign and extensions/my-quotes/src/lib/consent.ts.
   const CONSENT = 'I agree to receive quote alerts by text from DSG Distributors. Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out, HELP for help.';

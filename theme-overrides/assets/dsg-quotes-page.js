@@ -3,7 +3,7 @@
 (() => {
   'use strict';
   const root = document.querySelector('[data-mq]');
-  if (!root || new URLSearchParams(location.search).get('view') === 'notifications') return;
+  if (!root || new URLSearchParams(location.search).get('tab') === 'notifications') return;
   const BASE = '/apps/quotes';
   const quoteId = new URLSearchParams(location.search).get('id');
 
