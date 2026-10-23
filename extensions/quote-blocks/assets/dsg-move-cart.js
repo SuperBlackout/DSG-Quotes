@@ -5,6 +5,11 @@
   if (!Q) return;
   var el = Q.el;
 
+  function money(cents, cur) {
+    try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur || 'USD' }).format((cents || 0) / 100); }
+    catch (e) { return '$' + ((cents || 0) / 100).toFixed(2); }
+  }
+
   function field(label, input, cls) {
     return el('label', { class: 'dsg-field' + (cls ? ' ' + cls : '') }, [label, input]);
   }
@@ -24,37 +29,63 @@
     var rNew = el('input', { type: 'radio', name: modeName, value: 'new', checked: true });
     var rExisting = el('input', { type: 'radio', name: modeName, value: 'existing' });
     var optNew = el('label', { class: 'dsg-seg is-selected' }, [rNew, 'New quote']);
-    var optExisting = el('label', { class: 'dsg-seg' }, [rExisting, 'Add to existing']);
-    var segs = el('fieldset', { class: 'dsg-segs' }, [el('legend', { class: 'dsg-sr', text: 'Quote target' }), optNew, optExisting]);
+    var optExisting = el('label', { class: 'dsg-seg' }, [rExisting, 'Add to a draft']);
+    var segs = el('fieldset', { class: 'dsg-segs' }, [el('legend', { class: 'dsg-legend', text: 'Where should this cart go?' }), optNew, optExisting]);
 
-    var job = el('input', { type: 'text', autocomplete: 'off' });
-    var jobField = field('Job name', job);
-    var select = el('select', { 'aria-label': 'Existing draft quote' });
-    var selectField = field('Draft quote', select);
+    var jobId = uid + '-job';
+    var job = el('input', { type: 'text', id: jobId, autocomplete: 'off', placeholder: 'e.g. Smith warehouse cameras', 'aria-required': 'true', 'aria-describedby': jobId + '-err' });
+    var jobError = el('span', { class: 'dsg-field__error', id: jobId + '-err', hidden: true });
+    var jobField = el('div', { class: 'dsg-field' }, [
+      el('label', { for: jobId }, ['Job or quote name ', el('span', { class: 'dsg-req', 'aria-hidden': 'true', text: '*' }), el('span', { class: 'dsg-sr', text: ' (required)' })]),
+      job, jobError
+    ]);
+    var select = el('select', { id: uid + '-draft', 'aria-label': 'Existing draft quote' });
+    var selectField = el('div', { class: 'dsg-field' }, [el('label', { for: uid + '-draft', text: 'Draft quote' }), select]);
     selectField.hidden = true;
-    var po = el('input', { type: 'text', placeholder: 'Optional', autocomplete: 'off' });
-    var needed = el('input', { type: 'date' });
+    var poId = uid + '-po';
+    var po = el('input', { type: 'text', id: poId, autocomplete: 'off', placeholder: 'Your PO #' });
+    var neededId = uid + '-needed';
+    var needed = el('input', { type: 'date', id: neededId });
     var today = new Date();
     needed.setAttribute('min', today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2));
-    var note = el('textarea', { rows: '2', placeholder: 'e.g. Competing bid, need delivery to job site' });
-    var empty = el('input', { type: 'checkbox', checked: true });
-    var summary = el('p', { class: 'dsg-note', 'aria-live': 'polite' });
+    var noteId = uid + '-note';
+    var note = el('textarea', { id: noteId, rows: '3', placeholder: 'e.g. Competing bid, need delivery to the job site by Friday' });
+    var empty = el('input', { type: 'checkbox', checked: true, id: uid + '-empty' });
+    var itemsLine = el('div', { class: 'dsg-sum__items', 'aria-live': 'polite' });
+    var totalLine = el('div', { class: 'dsg-sum__total' });
     var error = el('div', { class: 'dsg-error', role: 'alert', hidden: true });
     var status = el('div', { class: 'dsg-status', role: 'status', 'aria-live': 'polite' });
     var draftBtn = el('button', { type: 'button', class: 'dsg-btn dsg-btn--secondary', text: 'Save as draft' });
-    var submitBtn = el('button', { type: 'button', class: 'dsg-btn dsg-btn--primary', text: 'Submit to sales' });
+    var submitBtn = el('button', { type: 'button', class: 'dsg-btn dsg-btn--primary', text: 'Send to sales' });
 
+    var steps = el('ol', { class: 'dsg-steps' }, [
+      el('li', { text: 'Sales reviews your cart and prices the quote, usually the same business day.' }),
+      el('li', { text: 'You get an email (or text) and can reply right on the quote.' }),
+      el('li', { text: 'Accept it, then check out at the quoted prices.' })
+    ]);
+
+    var fields = el('div', { class: 'dsg-mc__fields' }, [
+      segs, jobField, selectField,
+      el('div', { class: 'dsg-row' }, [
+        el('div', { class: 'dsg-field dsg-field--half' }, [el('label', { for: poId }, ['PO number ', el('span', { class: 'dsg-opt-label', text: '(optional)' })]), po]),
+        el('div', { class: 'dsg-field dsg-field--half' }, [el('label', { for: neededId }, ['Needed by ', el('span', { class: 'dsg-opt-label', text: '(optional)' })]), needed])
+      ]),
+      el('div', { class: 'dsg-field' }, [el('label', { for: noteId }, ['Note to sales ', el('span', { class: 'dsg-opt-label', text: '(optional)' })]), note])
+    ]);
+    var side = el('aside', { class: 'dsg-mc__side', 'aria-label': 'Quote summary' }, [
+      el('div', { class: 'dsg-sum' }, [el('div', { class: 'dsg-sum__label', text: 'Your cart' }), itemsLine, totalLine]),
+      el('div', { class: 'dsg-next' }, [el('div', { class: 'dsg-sum__label', text: 'What happens next' }), steps]),
+      el('label', { class: 'dsg-check' }, [empty, 'Clear my cart once it is moved']),
+      error, status,
+      el('div', { class: 'dsg-actions' }, [submitBtn, draftBtn]),
+      el('p', { class: 'dsg-note', text: 'A draft stays private until you send it. You can edit it anytime in My quotes.' })
+    ]);
     var form = el('div', { class: 'dsg-card dsg-mc__form' }, [
       el('div', { class: 'dsg-mc__head' }, [
-        el('span', { class: 'dsg-mc__icon', 'aria-hidden': 'true', text: '☰' }),
-        el('span', {}, [el('strong', { class: 'dsg-mc__title', text: heading }), el('span', { class: 'dsg-note', text: sub })])
+        el('span', { class: 'dsg-mc__icon', 'aria-hidden': 'true' }),
+        el('span', {}, [el('h2', { class: 'dsg-mc__title', text: heading }), el('span', { class: 'dsg-mc__sub', text: sub })])
       ]),
-      segs, jobField, selectField,
-      el('div', { class: 'dsg-row' }, [field('PO #', po, 'dsg-field--half'), field('Needed by', needed, 'dsg-field--half')]),
-      field('Note to sales', note),
-      el('label', { class: 'dsg-check' }, [empty, 'Empty my cart after moving']),
-      summary, error, status,
-      el('div', { class: 'dsg-actions' }, [draftBtn, submitBtn])
+      el('div', { class: 'dsg-mc__grid' }, [fields, side])
     ]);
     host.textContent = '';
     host.appendChild(form);
@@ -66,8 +97,12 @@
       form.setAttribute('aria-busy', b ? 'true' : 'false');
     }
     function showError(msg, focusEl) {
-      error.textContent = msg || '';
-      error.hidden = !msg;
+      var inline = focusEl === job;
+      error.textContent = inline ? '' : (msg || '');
+      error.hidden = inline || !msg;
+      jobError.textContent = inline ? (msg || '') : '';
+      jobError.hidden = !(inline && msg);
+      if (!msg) job.removeAttribute('aria-invalid');
       if (msg && focusEl) focusEl.focus();
     }
 
@@ -125,7 +160,9 @@
     function refreshSummary() {
       return readCart().then(function (cart) {
         var n = cart.item_count || 0;
-        summary.textContent = n ? n + (n === 1 ? ' item' : ' items') + ' in your cart will be copied to the quote.' : 'Your cart is empty.';
+        itemsLine.textContent = n ? n + (n === 1 ? ' item' : ' items') + ' will be copied to the quote' : 'Your cart is empty';
+        totalLine.textContent = n ? money(cart.total_price, cart.currency || currency) + ' at today\'s prices' : '';
+        totalLine.hidden = !n;
         draftBtn.disabled = submitBtn.disabled = !n;
         return cart;
       }).catch(function () { return null; });
@@ -188,18 +225,24 @@
 
     function done(quote, submitted, emptied, cleared) {
       Q.emitActive(submitted ? {} : { quoteId: quote.id, number: quote.number, title: quote.title, lineCount: quote.lineCount });
-      var label = (quote.displayNumber || 'Q-' + quote.number) + ' — ' + Q.quoteTitle(quote);
+      var label = (quote.displayNumber || 'Q-' + quote.number) + ' · ' + Q.quoteTitle(quote);
       var back = el('button', { type: 'button', class: 'dsg-btn dsg-btn--secondary', text: emptied && cleared ? 'Back to cart' : 'Refresh cart' });
       back.addEventListener('click', function () { root.location.reload(); });
       var view = el('a', { class: 'dsg-btn dsg-btn--primary', href: Q.quotesUrl(myQuotesUrl, quote.id), text: 'View quote' });
-      var msg = (submitted ? 'Submitted to sales: ' : 'Saved as draft: ') + label + '.';
+      var msg = submitted
+        ? 'A rep will price it, usually the same business day. We will email you (and text, if you have turned texts on) when it is ready.'
+        : 'It stays private until you send it. Open it anytime from My quotes to add items or send it to sales.';
       var warn = emptied && !cleared ? el('div', { class: 'dsg-error', role: 'alert', text: 'Your quote was saved, but we could not empty your cart. You can remove the items yourself.' }) : null;
       host.textContent = '';
       var card = el('div', { class: 'dsg-card dsg-mc__done' }, [
-        el('strong', { class: 'dsg-mc__title', text: submitted ? 'Sent to sales' : 'Draft saved' }),
-        el('p', { class: 'dsg-status', role: 'status', 'aria-live': 'polite', text: msg }),
-        warn,
-        el('div', { class: 'dsg-actions' }, [back, view])
+        el('span', { class: 'dsg-mc__check', 'aria-hidden': 'true', text: '✓' }),
+        el('div', { class: 'dsg-mc__done-body' }, [
+          el('h2', { class: 'dsg-mc__title', text: submitted ? 'Sent to sales' : 'Draft saved' }),
+          el('p', { class: 'dsg-mc__label', text: label }),
+          el('p', { class: 'dsg-status', role: 'status', 'aria-live': 'polite', text: msg }),
+          warn,
+          el('div', { class: 'dsg-actions' }, [view, back])
+        ])
       ]);
       host.appendChild(card);
       view.focus();

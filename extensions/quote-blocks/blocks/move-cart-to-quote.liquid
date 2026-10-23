@@ -17,7 +17,7 @@
   data-currency="{{ cart.currency.iso_code }}"
   data-heading="{{ block.settings.heading | escape }}"
   data-subheading="{{ block.settings.subheading | escape }}"
-  data-my-quotes-url="{{ block.settings.my_quotes_url | default: routes.account_url }}"
+  data-my-quotes-url="{{ block.settings.my_quotes_url | default: '/pages/quote?id={id}' }}"
   data-base="/apps/quotes"
   {% if block.settings.accent != blank %}style="--dsg-accent: {{ block.settings.accent }}; --dsg-on-accent: {{ block.settings.on_accent | default: '#ffffff' }}"{% endif %}
   {{ block.shopify_attributes }}

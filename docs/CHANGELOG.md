@@ -1,5 +1,7 @@
 # Changelog
 
+- Storefront: redesigned the cart "Move cart to quote" block. Full-width two-column card, required-field marker with inline error, cart item count and total, "what happens next" steps, "Send to sales" / "Save as draft" buttons, clearer success state, and "View quote" now opens `/pages/quote?id=` by default. Size budget raised to 34 KB.
+
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
 ## 2026-10-23

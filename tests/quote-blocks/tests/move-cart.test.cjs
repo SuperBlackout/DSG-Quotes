@@ -6,23 +6,26 @@ const { boot, defaultState, until, tick, CART_HTML, CHIP_HTML } = require('./hel
 const SCRIPTS = ['dsg-move-cart.js'];
 const btn = (page, text) => [...page.d.querySelectorAll('button')].find((b) => b.textContent === text);
 const fill = (page, el, v) => { el.value = v; el.dispatchEvent(new page.w.Event('input', { bubbles: true })); };
-const input = (page, label) => [...page.d.querySelectorAll('label.dsg-field')].find((l) => l.firstChild.textContent === label).querySelector('input,textarea,select');
+const input = (page, label) => {
+  const l = [...page.d.querySelectorAll('.dsg-field > label')].find((x) => x.textContent.replace(/\s*\*?\s*\((optional|required)\)\s*$/, '').replace(/\s*\*$/, '').trim() === label);
+  return l.parentElement.querySelector('input,textarea,select');
+};
 
 test('renders the form from the mockup and summarizes the cart', async () => {
   const page = await boot(CART_HTML, SCRIPTS);
   await until(() => /26 items/.test(page.d.body.textContent));
   assert.match(page.d.body.textContent, /Need better pricing\? Move cart to a quote/);
-  for (const l of ['Job name', 'PO #', 'Needed by', 'Note to sales']) assert.ok(input(page, l), l);
+  for (const l of ['Job or quote name', 'PO number', 'Needed by', 'Note to sales']) assert.ok(input(page, l), l);
   assert.equal(page.d.querySelector('.dsg-check input').checked, true, 'empty cart checked by default');
-  assert.ok(btn(page, 'Save as draft') && btn(page, 'Submit to sales'));
+  assert.ok(btn(page, 'Save as draft') && btn(page, 'Send to sales'));
   assert.equal(page.d.querySelector('input[value=new]').checked, true);
 });
 
 test('move cart to a NEW quote as draft, then empty the cart only after the 2xx', async () => {
   const page = await boot(CART_HTML, SCRIPTS);
   await until(() => /26 items/.test(page.d.body.textContent));
-  fill(page, input(page, 'Job name'), 'Ridgeway Church — PA upgrade');
-  fill(page, input(page, 'PO #'), '5512');
+  fill(page, input(page, 'Job or quote name'), 'Ridgeway Church — PA upgrade');
+  fill(page, input(page, 'PO number'), '5512');
   fill(page, input(page, 'Needed by'), '2026-11-14');
   fill(page, input(page, 'Note to sales'), 'Competing bid');
   btn(page, 'Save as draft').click();
@@ -39,12 +42,12 @@ test('move cart to a NEW quote as draft, then empty the cart only after the 2xx'
   assert.ok(order.indexOf('POST /cart/clear.js') > order.indexOf('POST /apps/quotes/c/quotes/from-cart'), 'cart cleared after the quote call');
   assert.deepEqual(page.state.cart.items, []);
   assert.match(page.d.body.textContent, /Draft saved/);
-  assert.match(page.d.body.textContent, /Saved as draft: Q-100/);
+  assert.match(page.d.body.textContent, /Q-100/);
   assert.equal(page.d.querySelector('.dsg-mc__done a').getAttribute('href'), '/acct/quotes/q100');
   assert.ok(page.state.calls.find((c) => c.key === 'PUT /apps/quotes/c/active-quote'), 'drafts become the active quote');
 });
 
-test('Submit to sales with an existing draft: header fields ride in the from-cart target, no PATCH, cart kept when unchecked', async () => {
+test('Send to sales with an existing draft: header fields ride in the from-cart target, no PATCH, cart kept when unchecked', async () => {
   const page = await boot(CART_HTML, SCRIPTS);
   await until(() => /26 items/.test(page.d.body.textContent));
   page.d.querySelector('input[value=existing]').click();
@@ -53,11 +56,11 @@ test('Submit to sales with an existing draft: header fields ride in the from-car
   assert.equal(sel.value, 'q1', 'active quote preselected');
   assert.match(sel.options[0].textContent, /Q-10482 · PO 4471/);
   sel.value = 'q2';
-  fill(page, input(page, 'PO #'), 'PO-9');
+  fill(page, input(page, 'PO number'), 'PO-9');
   fill(page, input(page, 'Needed by'), '2026-12-01');
   fill(page, input(page, 'Note to sales'), 'Deliver to dock B');
   page.d.querySelector('.dsg-check input').click(); // uncheck
-  btn(page, 'Submit to sales').click();
+  btn(page, 'Send to sales').click();
   await until(() => page.d.querySelector('.dsg-mc__done'));
 
   const order = page.calls();
@@ -114,7 +117,7 @@ test('error state: API rejects, cart is NOT cleared, form stays editable', async
   state.fail.push({ match: /from-cart$/, times: 1, status: 422, body: { code: 'VALIDATION_FAILED', message: 'Variant 222 is not in your catalog.' } });
   const page = await boot(CART_HTML, SCRIPTS, state);
   await until(() => /26 items/.test(page.d.body.textContent));
-  fill(page, input(page, 'Job name'), 'Job A');
+  fill(page, input(page, 'Job or quote name'), 'Job A');
   btn(page, 'Save as draft').click();
   await until(() => !page.d.querySelector('.dsg-error').hidden);
   assert.equal(page.d.querySelector('.dsg-error').textContent, 'Variant 222 is not in your catalog.');
@@ -132,7 +135,7 @@ test('error state: quote saved but cart clear fails shows a warning', async () =
   state.fail.push({ match: /clear\.js$/, status: 500, body: {} });
   const page = await boot(CART_HTML, SCRIPTS, state);
   await until(() => /26 items/.test(page.d.body.textContent));
-  fill(page, input(page, 'Job name'), 'Job B');
+  fill(page, input(page, 'Job or quote name'), 'Job B');
   btn(page, 'Save as draft').click();
   await until(() => page.d.querySelector('.dsg-mc__done'));
   assert.match(page.d.querySelector('.dsg-mc__done .dsg-error').textContent, /could not empty your cart/);
@@ -142,12 +145,12 @@ test('validation: job name required for a new quote; no network calls', async ()
   const page = await boot(CART_HTML, SCRIPTS);
   await until(() => /26 items/.test(page.d.body.textContent));
   const before = page.state.calls.length;
-  btn(page, 'Submit to sales').click();
+  btn(page, 'Send to sales').click();
   await tick(10);
-  const j = input(page, 'Job name');
+  const j = input(page, 'Job or quote name');
   assert.equal(j.getAttribute('aria-invalid'), 'true');
   assert.equal(page.d.activeElement, j);
-  assert.match(page.d.querySelector('.dsg-error').textContent, /job name/i);
+  assert.match(page.d.querySelector('.dsg-field__error').textContent, /job name/i);
   assert.equal(page.state.calls.length, before);
 });
 
@@ -157,7 +160,7 @@ test('empty cart disables both buttons', async () => {
   const page = await boot(CART_HTML, SCRIPTS, state);
   await until(() => /Your cart is empty/.test(page.d.body.textContent));
   assert.equal(btn(page, 'Save as draft').disabled, true);
-  assert.equal(btn(page, 'Submit to sales').disabled, true);
+  assert.equal(btn(page, 'Send to sales').disabled, true);
 });
 
 test('logged-out / expired session: 401 explains how to continue', async () => {
@@ -165,7 +168,7 @@ test('logged-out / expired session: 401 explains how to continue', async () => {
   state.fail.push({ match: /from-cart$/, status: 401, body: { code: 'UNAUTHENTICATED', message: 'Sign in' } });
   const page = await boot(CART_HTML, SCRIPTS, state);
   await until(() => /26 items/.test(page.d.body.textContent));
-  fill(page, input(page, 'Job name'), 'Job C');
+  fill(page, input(page, 'Job or quote name'), 'Job C');
   btn(page, 'Save as draft').click();
   await until(() => !page.d.querySelector('.dsg-error').hidden);
   assert.match(page.d.querySelector('.dsg-error').textContent, /Sign in again/);
