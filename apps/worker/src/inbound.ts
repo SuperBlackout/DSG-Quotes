@@ -83,3 +83,7 @@ export async function optInPhone(tx: Tx, phone: string, opts: { now?: Date } = {
   if (removed.count > 0) await tx.notificationLog.create({ data: { quoteId: null, channel: "SMS", to: phone, status: "OPTED_IN_START", providerId: null, createdAt: opts.now ?? new Date() } });
   return removed.count > 0;
 }
+
+/** Record that the welcome text went out (as the TwiML reply to YES), so the worker's welcome pass does not send it a second time. */
+export const logWelcomeSent = (tx: Tx, phone: string, now: Date) =>
+  tx.notificationLog.create({ data: { quoteId: null, channel: "SMS", to: phone, status: "WELCOME_SENT", providerId: null, createdAt: now } });

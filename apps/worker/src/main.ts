@@ -1,6 +1,6 @@
 import { buildProviders, consoleLogger, loadNotifyConfig, type WorkerDeps } from "./config";
 import { createPrisma } from "./db";
-import { sendOptInRequests } from "./optin";
+import { sendOptInRequests, sendWelcomeTexts } from "./optin";
 import { processBatch } from "./processor";
 
 /** `pnpm -F worker start`: Render background worker (dsg-quotes-worker). Polls the `events` table until SIGTERM. */
@@ -12,6 +12,7 @@ async function main() {
   const deps: WorkerDeps = { prisma, email, sms, config: loadNotifyConfig(), now: () => new Date(), log: consoleLogger };
   const pollMs = Number(process.env.WORKER_POLL_MS ?? 5000);
 
+  let lastWelcomeCheck = 0;
   let stopping = false;
   let wake: (() => void) | null = null;
   const stop = () => {
@@ -28,6 +29,10 @@ async function main() {
       const s = await processBatch(deps);
       busy = Object.entries(s.outcomes).some(([k, n]) => n > 0 && !["busy", "taken", "held", "error", "retry", "deferred_waiting"].includes(k));
       if ((await sendOptInRequests(deps)) > 0) busy = true;
+      if (Date.now() - lastWelcomeCheck >= 15_000) {
+        lastWelcomeCheck = Date.now();
+        if ((await sendWelcomeTexts(deps)) > 0) busy = true;
+      }
     } catch (e) {
       deps.log.error("poll failed", { error: (e as Error).message });
     }

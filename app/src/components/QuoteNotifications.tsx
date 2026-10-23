@@ -16,6 +16,8 @@ const STATUS_LABEL: Record<string, string> = {
   SKIPPED_SMS_DISABLED: "Skipped (texting off)",
   SKIPPED_QUIET_HOURS: "Held for quiet hours",
   OPTED_OUT: "Replied STOP",
+  WELCOME_SENT: "Welcome text sent",
+  WELCOME_FAILED: "Welcome text failed",
 };
 
 /** "Who gets alerts for this quote": the resolved recipients, extra people for this quote only, and a short send log. */

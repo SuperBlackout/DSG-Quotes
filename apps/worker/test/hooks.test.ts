@@ -242,7 +242,8 @@ describe("numbers a rep added to one quote", () => {
     const quote = await mkQuote(ctx.prisma);
     await add(quote.id, "PENDING");
     const yes = await sms({ From: EXTRA, Body: "YES" });
-    expect(yes.body).toContain(`Q-${quote.number}`);
+    expect(yes.body).toContain("successfully enrolled in SMS notifications");
+    expect(await ctx.prisma.notificationLog.count({ where: { to: EXTRA, status: "WELCOME_SENT" } })).toBe(1);
     expect(await ctx.prisma.quoteRecipient.findFirstOrThrow({ where: { quoteId: quote.id } })).toMatchObject({ state: "ACTIVE" });
     await sms({ From: EXTRA, Body: "STOP" });
     expect(await ctx.prisma.quoteRecipient.findFirstOrThrow({ where: { quoteId: quote.id } })).toMatchObject({ state: "OPTED_OUT" });

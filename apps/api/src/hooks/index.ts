@@ -2,9 +2,10 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 // Shared with the worker (which signs the Reply-To addresses and sends the alerts). Dependency-free modules, imported by path
 // because apps/api does not depend on the worker package.
-import { isSmsOptedOut, optInPhone, optOutPhone, recordInboundMessage } from "../../../worker/src/inbound";
+import { isSmsOptedOut, logWelcomeSent, optInPhone, optOutPhone, recordInboundMessage } from "../../../worker/src/inbound";
 import { extractEmail, parseReplyAddress } from "../../../worker/src/lib/reply-token";
 import { normalizePhone, smsKeyword } from "../../../worker/src/lib/phone";
+import { WELCOME_TEXT } from "../../../worker/src/optin";
 import { htmlToText, stripQuotedReply } from "../../../worker/src/lib/strip-quoted";
 import { verifyTwilioSignature } from "../../../worker/src/lib/twilio-signature";
 import "../context";
@@ -193,8 +194,8 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
           const confirmed = await tx.quoteRecipient.findMany({ where: { kind: "SMS", address: from, state: "PENDING" }, select: { id: true, quoteId: true } });
           if (confirmed.length > 0) {
             await tx.quoteRecipient.updateMany({ where: { id: { in: confirmed.map((c) => c.id) } }, data: { state: "ACTIVE", optInAt: now } });
-            const nums = await tx.quote.findMany({ where: { id: { in: confirmed.map((c) => c.quoteId) } }, select: { number: true }, orderBy: { number: "asc" } });
-            return { kind: "confirmed" as const, quotes: nums.map((n) => `Q-${n.number}`).join(", ") };
+            await logWelcomeSent(tx, from, now);
+            return { kind: "confirmed" as const };
           }
           return { kind: "start" as const };
         }
@@ -221,7 +222,7 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
       });
 
       if (out.kind === "stop") return twiml(); // Twilio's Advanced Opt-Out sends the carrier-required confirmation itself
-      if (out.kind === "confirmed") return twiml(`DSG Distributors: you're confirmed for text updates on ${out.quotes}. Reply here to message our sales team. Reply STOP to opt out.`);
+      if (out.kind === "confirmed") return twiml(WELCOME_TEXT);
       if (out.kind === "start") return twiml("DSG Quotes: to turn text alerts back on, open My Quotes > Notification settings and confirm your number.");
       if (out.kind === "no_context") return twiml("DSG Quotes: we could not match your text to a quote. Please reply from My Quotes on dsg.direct.");
       return twiml();

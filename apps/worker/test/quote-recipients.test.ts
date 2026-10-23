@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sendOptInRequests } from "../src/optin";
+import { WELCOME_TEXT, sendOptInRequests, sendWelcomeTexts } from "../src/optin";
 import { processBatch } from "../src/processor";
 import { mkEvent, mkQuote, useWorker } from "./helpers";
 
@@ -63,5 +63,30 @@ describe("opt-in request text", () => {
     expect(await sendOptInRequests(ctx.deps)).toBe(0);
     expect(ctx.sms.sent).toHaveLength(0);
     expect((await ctx.prisma.quoteRecipient.findUniqueOrThrow({ where: { id: r.id } })).state).toBe("OPTED_OUT");
+  });
+});
+
+describe("welcome text after enrolling", () => {
+  const enroll = (phone: string, optInAt: Date) =>
+    ctx.prisma.notificationPref.create({ data: { shop: "dsg-test.myshopify.com", customerId: "gid://shopify/Customer/777", event: "NEW_MESSAGE", email: true, sms: true, phone, smsOptInAt: optInAt } });
+
+  it("is sent once per enrollment with the exact wording, and again after re-enrolling", async () => {
+    await enroll(PHONE2, new Date("2026-01-01T00:00:00Z"));
+    expect(await sendWelcomeTexts(ctx.deps)).toBe(1);
+    const m = ctx.sms.sent.find((x) => x.to === PHONE2)!;
+    expect(m.body).toBe(WELCOME_TEXT);
+    expect(m.body).toContain("Reply HELP for help or STOP to opt out");
+    expect(await sendWelcomeTexts(ctx.deps)).toBe(0); // not again
+
+    await ctx.prisma.notificationPref.updateMany({ data: { smsOptInAt: new Date("2030-01-01T00:00:00Z") } }); // opted in again later
+    expect(await sendWelcomeTexts(ctx.deps)).toBe(1);
+  });
+
+  it("is never sent to a number on the STOP list or one that has not opted in", async () => {
+    await enroll(PHONE2, new Date("2026-01-01T00:00:00Z"));
+    await ctx.prisma.smsOptOut.create({ data: { phone: PHONE2, source: "twilio-stop" } });
+    await ctx.prisma.notificationPref.create({ data: { shop: "dsg-test.myshopify.com", customerId: "gid://shopify/Customer/778", event: "NEW_MESSAGE", email: true, sms: true, phone: "+15165550177", smsOptInAt: null } });
+    expect(await sendWelcomeTexts(ctx.deps)).toBe(0);
+    expect(ctx.sms.sent).toHaveLength(0);
   });
 });
