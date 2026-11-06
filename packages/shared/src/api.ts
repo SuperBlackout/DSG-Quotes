@@ -1810,6 +1810,11 @@ export interface components {
             lineNote?: string | null;
         };
         DraftRevisionRequest: {
+            /**
+             * @description The `StaffQuote.rev` the editor loaded. On a DRAFT or SHARED quote a stale `rev` returns 409
+             *     `VERSION_MISMATCH` (`details.currentRev`) instead of overwriting lines the customer changed. Omitted = no check.
+             */
+            rev?: number;
             lines: components["schemas"]["StaffLineInput"][];
             freight?: components["schemas"]["Money"];
             /** Format: date-time */

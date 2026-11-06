@@ -2226,6 +2226,12 @@ components:
       type: object
       required: [lines]
       properties:
+        rev:
+          type: integer
+          minimum: 0
+          description: |
+            The `StaffQuote.rev` the editor loaded. On a DRAFT or SHARED quote a stale `rev` returns 409
+            `VERSION_MISMATCH` (`details.currentRev`) instead of overwriting lines the customer changed. Omitted = no check.
         lines:
           type: array
           items: { $ref: "#/components/schemas/StaffLineInput" }
