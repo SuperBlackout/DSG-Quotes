@@ -4,7 +4,8 @@ import type { Schemas } from "shared";
 import type { AppDeps, StaffPrincipal, Tx } from "../context";
 import { ApiError, notFound } from "../errors";
 import { staffQuote } from "../serializers/staff";
-import { defaultFloor, floorFor, isBelowFloor, isCostUnknown, latestVersion, refreshDerived, staffWorkingLines } from "./lines";
+import { deleteSharedLine } from "./collab";
+import { applyLineOrder, defaultFloor, floorFor, isBelowFloor, isCostUnknown, latestVersion, refreshDerived, staffWorkingLines } from "./lines";
 import { assertFits, checkedTotals, ZERO, parseMoney, fmt, D } from "./money";
 import type { VariantPricing } from "../shopify/types";
 import { applyTransition, lockQuote, writeEvent } from "./transitions";
@@ -21,12 +22,13 @@ export async function getStaffQuoteRow(tx: Tx, deps: AppDeps, id: string, lock =
 
 export async function loadStaffView(tx: Tx, deps: AppDeps, id: string, actor?: Pick<Staff, "priceFloorPct">): Promise<Schemas["StaffQuote"]> {
   const quote = await tx.quote.findUniqueOrThrow({ where: { id }, include: { job: true, assignedRep: true } });
-  const [working, versions, messages, events, change] = await Promise.all([
+  const [working, versions, messages, events, change, comments] = await Promise.all([
     staffWorkingLines(tx, quote),
     tx.quoteVersion.findMany({ where: { quoteId: id }, orderBy: { versionNo: "asc" }, include: { lines: true } }),
     tx.message.findMany({ where: { quoteId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
     tx.event.findMany({ where: { quoteId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
     tx.event.findFirst({ where: { quoteId: id, type: "REQUEST_CHANGES" }, orderBy: { createdAt: "desc" } }),
+    tx.quoteComment.findMany({ where: { quoteId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
   ]);
   const payload = (change?.payload ?? {}) as { message?: unknown };
   return staffQuote({
@@ -35,13 +37,15 @@ export async function loadStaffView(tx: Tx, deps: AppDeps, id: string, actor?: P
     versions,
     messages,
     events,
+    comments,
+    staffIdByOrigin: new Map(working.filter((l) => l.originLineId).map((l) => [l.originLineId!, l.id])),
     floor: floorFor(quote.assignedRep, actor, await defaultFloor(tx, quote.shop)),
     latestChangeRequest: typeof payload.message === "string" ? payload.message : null,
     nextVersionNo: Math.max(quote.currentVersion, ...versions.map((v) => v.versionNo)) + 1,
   });
 }
 
-export const WORKING_STATUSES = ["DRAFT", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED"] as const;
+export const WORKING_STATUSES = ["DRAFT", "SHARED", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED"] as const;
 export const DEFAULT_EXPIRY_MS = (days: number) => days * 24 * 60 * 60 * 1000;
 
 export interface DraftRevisionInput {
@@ -59,12 +63,16 @@ export async function saveDraftRevision(
   quoteId: string,
   input: DraftRevisionInput,
   pricingFor: (variantId: string) => Promise<VariantPricing | null>,
+  opts: { shared?: boolean } = {},
 ) {
+  const shared = opts.shared === true;
   const quote = await tx.quote.findUniqueOrThrow({ where: { id: quoteId } });
   const existing = await tx.quoteLine.findMany({ where: { quoteId, set: "STAFF" } });
   const byId = new Map(existing.map((l) => [l.id, l]));
   const keep = new Set<string>();
   let position = 0;
+  // Shared mode: the CUSTOMER set stays the shared structure. Order of its line ids, as the rep arranged them.
+  const sharedOrder: string[] = [];
 
   for (const l of input.lines) {
     position += 1;
@@ -86,6 +94,11 @@ export async function saveDraftRevision(
           ...(priceChanged ? { floorApproved: false, floorApprovedById: null } : {}),
         },
       });
+      if (shared && cur.originLineId) {
+        // Quantity and note are shared with the customer; the quoted price stays private until send.
+        await tx.quoteLine.update({ where: { id: cur.originLineId }, data: { qty: l.qty, lineNote: l.lineNote ?? null } });
+        sharedOrder.push(cur.originLineId);
+      }
     } else {
       const p = await pricingFor(l.variantId);
       if (!p) throw new ApiError("VALIDATION_FAILED", "Product variant not found", { field: "variantId", variantId: l.variantId });
@@ -107,9 +120,26 @@ export async function saveDraftRevision(
         },
       });
       keep.add(created.id);
+      if (shared) {
+        // A product the rep added is also a shared line, shown to the customer at the list price.
+        const listPrice = created.listPrice;
+        const mirror = await tx.quoteLine.create({
+          data: {
+            quoteId, set: "CUSTOMER", variantId: created.variantId, sku: created.sku, title: created.title, imageUrl: created.imageUrl,
+            qty: created.qty, listPrice, quotedPrice: listPrice, cost: created.cost, lineNote: created.lineNote, addedBy: "STAFF", position,
+          },
+        });
+        await tx.quoteLine.update({ where: { id: created.id }, data: { originLineId: mirror.id } });
+        sharedOrder.push(mirror.id);
+      }
     }
   }
-  const drop = existing.filter((l) => !keep.has(l.id)).map((l) => l.id);
+  const dropRows = existing.filter((l) => !keep.has(l.id));
+  const drop = dropRows.map((l) => l.id);
+  if (shared) {
+    for (const r of dropRows) if (r.originLineId) await deleteSharedLine(tx, quoteId, r.originLineId);
+    await applyLineOrder(tx, quoteId, sharedOrder);
+  }
   if (drop.length) await tx.quoteLine.deleteMany({ where: { id: { in: drop } } });
 
   const data: Prisma.QuoteUncheckedUpdateInput = {};
@@ -218,6 +248,7 @@ export async function sendRevision(tx: Tx, deps: AppDeps, quoteId: string, actor
     data: {
       currentVersion: versionNo,
       expiresAt,
+      customerReady: false,
       workingExpiresAt: null, // the next revision defaults to a fresh +14 days unless the rep picks a date
       ...(quote.assignedRepId ? {} : { assignedRep: { connect: { id: actor.id } } }),
     },

@@ -1,4 +1,4 @@
-import type { Job, Message, Quote, QuoteLine, QuoteVersion } from "@prisma/client";
+import type { Job, Message, Quote, QuoteComment, QuoteLine, QuoteVersion } from "@prisma/client";
 import { canTransition, customerCanEditLines, isPurchasable, waitingOn, type QuoteStatus } from "shared";
 import type { Schemas } from "shared";
 import { fmt, fmtOrNull, lineTotal } from "../domain/money";
@@ -26,6 +26,20 @@ export function customerLine(l: QuoteLine): Schemas["CustomerQuoteLine"] {
     lineTotal: fmt(lineTotal(l)),
     lineNote: l.lineNote,
     position: l.position,
+    addedBy: l.addedBy === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+  };
+}
+
+/** Customer-safe comment. `internal` comments must never reach this function; callers filter, and so do we. */
+export function customerComment(c: QuoteComment, viewerId: string): Schemas["CustomerLineComment"] {
+  return {
+    id: c.id,
+    body: c.body,
+    afterLineId: c.afterLineId,
+    authorType: c.authorType === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+    authorName: c.authorName ?? (c.authorType === "CUSTOMER" ? "You" : "DSG"),
+    mine: c.authorType === "CUSTOMER" && c.authorId === viewerId,
+    createdAt: iso(c.createdAt),
   };
 }
 
@@ -75,13 +89,13 @@ export interface SummaryExtras {
 
 export const NO_EXTRAS: SummaryExtras = { assignedRepName: null, unreadCount: 0, previousTotal: null };
 
-export function customerActions(q: Pick<Quote, "status" | "expiresAt" | "lineCount">, now: Date): Schemas["CustomerQuoteActions"] {
+export function customerActions(q: Pick<Quote, "status" | "expiresAt" | "lineCount"> & { customerReady?: boolean }, now: Date): Schemas["CustomerQuoteActions"] {
   const s = q.status as QuoteStatus;
   const expired = !!q.expiresAt && q.expiresAt.getTime() <= now.getTime();
   return {
     canEditLines: customerCanEditLines(s),
-    // Header fields (job, PO, needed-by, ship-to, notes) are editable exactly while the lines are: DRAFT.
-    canEditHeader: customerCanEditLines(s),
+    // Header fields (job, PO, needed-by, ship-to, notes) are customer-editable on DRAFT only (not on a rep-shared quote).
+    canEditHeader: s === "DRAFT",
     canSubmit: canTransition(s, "SUBMIT", "customer") && q.lineCount > 0,
     canWithdraw: canTransition(s, "WITHDRAW", "customer"),
     canAccept: canTransition(s, "ACCEPT", "customer") && !expired,
@@ -90,6 +104,8 @@ export function customerActions(q: Pick<Quote, "status" | "expiresAt" | "lineCou
     canReopen: canTransition(s, "REOPEN", "customer"),
     canDelete: canTransition(s, "DELETE", "customer"),
     canDecline: canTransition(s, "DECLINE", "customer"),
+    canReorder: customerCanEditLines(s),
+    canMarkReady: canTransition(s, "CUSTOMER_READY", "customer") && !q.customerReady,
   };
 }
 
@@ -106,7 +122,7 @@ export function customerSummary(q: QuoteWithJob, now: Date, extras: SummaryExtra
     displayNumber: displayNumber(q.number),
     title: q.title,
     status: q.status,
-    waitingOn: waitingOn(q.status as QuoteStatus),
+    waitingOn: waitingOn(q.status as QuoteStatus, { customerReady: q.customerReady }),
     job: jobRef(q.job),
     currentVersion: q.currentVersion,
     lineCount: q.lineCount,
@@ -129,6 +145,9 @@ export interface CustomerQuoteParts {
   lines: QuoteLine[];
   versions: (QuoteVersion & { lines: QuoteLine[] })[];
   messages: Message[];
+  /** All comments of the quote; internal ones are dropped here. */
+  comments?: QuoteComment[];
+  viewerId?: string;
 }
 
 export function customerQuote(p: CustomerQuoteParts, now: Date): Schemas["CustomerQuote"] {
@@ -140,6 +159,13 @@ export function customerQuote(p: CustomerQuoteParts, now: Date): Schemas["Custom
     shipTo: (q.shipToAddress as Schemas["Address"] | null) ?? null,
     notesToSales: q.notesToSales,
     watchers: asEmails(q.watchers),
+    rev: q.rev,
+    customerReady: q.customerReady,
+    sharedBy: q.createdByStaffId ? p.extras.assignedRepName : null,
+    comments:
+      q.status === "DRAFT" || q.status === "SHARED"
+        ? (p.comments ?? []).filter((c) => !c.internal).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map((c) => customerComment(c, p.viewerId ?? ""))
+        : [],
     lines: p.lines.slice().sort((a, b) => a.position - b.position).map(customerLine),
     versions: p.versions.slice().sort((a, b) => a.versionNo - b.versionNo).map(customerVersion),
     // Defence in depth: internal notes are filtered in the query AND here.

@@ -66,7 +66,7 @@ export async function summaryExtras(
   return out;
 }
 
-export async function loadCustomerView(tx: Tx, deps: AppDeps, id: string): Promise<Schemas["CustomerQuote"]> {
+export async function loadCustomerView(tx: Tx, deps: AppDeps, id: string, viewerId = ""): Promise<Schemas["CustomerQuote"]> {
   const quote = await tx.quote.findUniqueOrThrow({ where: { id }, include: { job: true, assignedRep: true } });
   const lines = await customerVisibleLines(tx, quote);
   const versions = await tx.quoteVersion.findMany({
@@ -80,7 +80,9 @@ export async function loadCustomerView(tx: Tx, deps: AppDeps, id: string): Promi
     take: MESSAGE_PAGE,
   });
   const extras = (await summaryExtras(tx, [quote])).get(id)!;
-  return customerQuote({ quote, extras, lines, versions, messages: recent.reverse() }, deps.now());
+  // Internal comments are excluded in the query AND again in the serializer.
+  const comments = await tx.quoteComment.findMany({ where: { quoteId: id, internal: false }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+  return customerQuote({ quote, extras, lines, versions, messages: recent.reverse(), comments, viewerId }, deps.now());
 }
 
 export async function resolveJob(
@@ -142,18 +144,18 @@ export async function addLine(
   pricing: VariantPricing,
   qty: number,
   opts: { lineNote?: string | null; addedBy: "CUSTOMER" | "STAFF" },
-) {
+): Promise<string> {
   const existing = await tx.quoteLine.findFirst({ where: { quoteId, set: "CUSTOMER", variantId: pricing.variantId } });
   if (existing) {
     await tx.quoteLine.update({
       where: { id: existing.id },
       data: { qty: Math.min(existing.qty + qty, 100000), ...(opts.lineNote ? { lineNote: opts.lineNote } : {}) },
     });
-    return;
+    return existing.id;
   }
   const last = await tx.quoteLine.findFirst({ where: { quoteId, set: "CUSTOMER" }, orderBy: { position: "desc" } });
   const price = assertFits("Price", parseMoney(pricing.price), "variantId");
-  await tx.quoteLine.create({
+  const created = await tx.quoteLine.create({
     data: {
       quoteId,
       set: "CUSTOMER",
@@ -170,6 +172,7 @@ export async function addLine(
       position: (last?.position ?? 0) + 1,
     },
   });
+  return created.id;
 }
 
 export async function createDraft(

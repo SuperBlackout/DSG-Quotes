@@ -27,7 +27,7 @@ describe("prisma/schema.prisma <-> prisma/migrations", () => {
 
   it("parses the schema (sanity)", () => {
     expect(models.size).toBeGreaterThanOrEqual(12);
-    expect(enums.get("QuoteStatus")).toHaveLength(10);
+    expect(enums.get("QuoteStatus")).toHaveLength(11);
   });
 
   it("every model has a table and every scalar field a column with matching nullability", async () => {

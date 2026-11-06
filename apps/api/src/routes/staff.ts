@@ -4,9 +4,13 @@ import { z } from "zod";
 import { canTransition } from "shared";
 import { staffAuth } from "../auth/middleware";
 import { isManagerRole, type AppDeps, type StaffPrincipal } from "../context";
-import { isoDateTime } from "../dates";
+import { calendarDate, isoDateTime } from "../dates";
 import { createDraft, addLine, fetchPricing, resolveJob } from "../domain/customerQuotes";
-import { defaultFloor, floorFor, isBelowFloor, isCostUnknown, materializeStaffSet, refreshDerived } from "../domain/lines";
+import { addComment, afterSharedEdit, assertRev, deleteSharedLine } from "../domain/collab";
+import {
+  bumpRev, customerLines, customerVisibleLines, defaultFloor, floorFor, isBelowFloor, isCostUnknown, isSharedMode,
+  materializeStaffSet, placeLineAfter, reconcileStaffSet, refreshDerived, reorderLines,
+} from "../domain/lines";
 import { applyRouting } from "../domain/routing";
 import { fmt } from "../domain/money";
 import {
@@ -34,7 +38,7 @@ const newJob = z.object({ name: z.string().min(1).max(200), poNumber: z.string()
 /** `limit` is 1..100; larger values are clamped to 100. */
 const limitParam = z.coerce.number().int().min(1).default(25).transform((n) => Math.min(n, 100));
 const listQuery = z.object({
-  tab: z.enum(["needs_response", "unassigned", "waiting_customer", "accepted", "expiring", "all"]).default("all"),
+  tab: z.enum(["needs_response", "unassigned", "waiting_customer", "accepted", "expiring", "all", "my_drafts", "shared"]).default("all"),
   rep: z.string().optional(),
   team: z.string().optional(),
   q: z.string().max(200).optional(),
@@ -42,12 +46,23 @@ const listQuery = z.object({
   limit: limitParam,
 });
 const pageQuery = z.object({ cursor: z.string().optional(), limit: limitParam });
+const address = z
+  .object({
+    name: z.string(), company: z.string(), address1: z.string(), address2: z.string().nullable(), city: z.string(),
+    province: z.string(), zip: z.string(), country: z.string(), phone: z.string().nullable(),
+  })
+  .partial();
 const createBody = z.object({
   customerId: z.string().min(1),
   companyLocationId: z.string().optional(),
   title: z.string().min(1).max(200),
   jobId: z.string().optional(),
   newJob: newJob.optional(),
+  poNumber: z.string().max(100).optional(),
+  neededBy: calendarDate.optional(),
+  shipTo: address.optional(),
+  notesToSales: z.string().max(5000).optional(),
+  startFrom: z.object({ type: z.enum(["QUOTE", "ORDER"]), id: z.string().min(1) }).optional(),
   lines: z.array(z.object({ variantId: z.string().min(1), qty: z.number().int().min(1).max(100000), lineNote: z.string().max(1000).optional() })).optional(),
   submit: z.boolean().default(false),
 });
@@ -71,6 +86,21 @@ const draftBody = z.object({
   expiresAt: isoDateTime.nullable().optional(),
   repNote: z.string().max(10000).nullable().optional(),
   internalNote: z.string().max(10000).nullable().optional(),
+  /** The `rev` the editor loaded. Checked on DRAFT (rep-created) and SHARED quotes. */
+  rev: z.number().int().min(0).optional(),
+});
+const shareBody = z.object({ message: z.string().max(5000).optional(), notify: z.boolean().default(true) });
+const addStaffLineBody = z.object({
+  variantId: z.string().min(1),
+  qty: z.number().int().min(1).max(100000),
+  lineNote: z.string().max(1000).optional(),
+  afterLineId: z.string().nullable().optional(),
+});
+const reorderBody = z.object({ lineIds: z.array(z.string()).min(1).max(500), rev: z.number().int().min(0) });
+const staffCommentBody = z.object({
+  body: z.string().trim().min(1).max(2000),
+  afterLineId: z.string().nullable().optional(),
+  internal: z.boolean().default(false),
 });
 const approveBody = z.object({ lineIds: z.array(z.string()).optional(), note: z.string().max(2000).optional() });
 const declineBody = z.object({ reason: z.string().max(2000).optional() });
@@ -90,7 +120,7 @@ const recipientBody = z.object({
   name: z.string().trim().max(120).optional(),
 });
 
-const TABS = ["needs_response", "unassigned", "waiting_customer", "accepted", "expiring", "all"] as const;
+const TABS = ["needs_response", "unassigned", "waiting_customer", "accepted", "expiring", "all", "my_drafts", "shared"] as const;
 type Tab = (typeof TABS)[number];
 const SALES_STATUSES = ["SUBMITTED", "IN_REVIEW", "CHANGES_REQUESTED"] as const;
 const OPEN_STATUSES = ["SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED", "ACCEPTED"] as const;
@@ -108,15 +138,20 @@ export async function staffRoutes(app: FastifyInstance) {
 
   // ---------------------------------------------------------------- inbox
   /** The predicate behind each inbox tab. GET /s/quotes?tab= and GET /s/reports/summary `tabCounts` both use it. */
-  const tabWhere = (tab: Tab, now: Date): Prisma.QuoteWhereInput => {
+  const tabWhere = (tab: Tab, now: Date, meId: string): Prisma.QuoteWhereInput => {
     const base: Prisma.QuoteWhereInput = { shop, deletedAt: null };
     switch (tab) {
+      case "my_drafts":
+        return { ...base, status: "DRAFT", createdByStaffId: meId };
+      case "shared":
+        return { ...base, status: "SHARED", OR: [{ assignedRepId: meId }, { createdByStaffId: meId }] };
       case "needs_response":
-        return { ...base, status: { in: [...SALES_STATUSES] } };
+        // A shared draft the customer marked ready is waiting on sales.
+        return { ...base, OR: [{ status: { in: [...SALES_STATUSES] } }, { status: "SHARED", customerReady: true }] };
       case "unassigned":
         return { ...base, status: { in: [...SALES_STATUSES] }, assignedRepId: null };
       case "waiting_customer":
-        return { ...base, status: "QUOTE_READY" };
+        return { ...base, OR: [{ status: "QUOTE_READY" }, { status: "SHARED", customerReady: false }] };
       case "accepted":
         return { ...base, status: "ACCEPTED" };
       case "expiring":
@@ -131,7 +166,7 @@ export async function staffRoutes(app: FastifyInstance) {
     const me = staffOf(req);
     const q = parse(listQuery, req.query);
     const now = deps.now();
-    const where: Prisma.QuoteWhereInput = tabWhere(q.tab, now);
+    const where: Prisma.QuoteWhereInput = tabWhere(q.tab, now, me.id);
     const and: Prisma.QuoteWhereInput[] = [];
     if (q.rep === "unassigned") and.push({ assignedRepId: null, teamId: null });
     else if (q.rep) and.push({ assignedRepId: q.rep === "me" ? me.id : q.rep });
@@ -164,11 +199,12 @@ export async function staffRoutes(app: FastifyInstance) {
     return { items: items.map(staffSummary), nextCursor };
   });
 
-  app.get("/reports/summary", async () => {
+  app.get("/reports/summary", async (req) => {
+    const me = staffOf(req);
     const now = deps.now();
     const base: Prisma.QuoteWhereInput = { shop, deletedAt: null };
     const weekAgo = new Date(now.getTime() - 7 * DAY);
-    const counts = await Promise.all(TABS.map((t) => deps.prisma.quote.count({ where: tabWhere(t, now) })));
+    const counts = await Promise.all(TABS.map((t) => deps.prisma.quote.count({ where: tabWhere(t, now, me.id) })));
     const tabCounts = Object.fromEntries(TABS.map((t, i) => [t, counts[i]!])) as Record<Tab, number>;
     const [open, acceptedEvents] = await Promise.all([
       deps.prisma.quote.aggregate({ where: { ...base, status: { in: [...OPEN_STATUSES] } }, _sum: { total: true } }),
@@ -198,18 +234,34 @@ export async function staffRoutes(app: FastifyInstance) {
     if (body.companyLocationId && buyer.companyLocationId !== body.companyLocationId) {
       throw new ApiError("VALIDATION_FAILED", "Customer does not belong to that company location", { field: "companyLocationId" });
     }
-    const pricing = await fetchPricing(deps, buyer, (body.lines ?? []).map((l) => l.variantId));
+    // Start from a past quote of the same company: its currently visible lines, repriced at today's buyer price.
+    let seed: { variantId: string; qty: number; lineNote?: string }[] = [];
+    if (body.startFrom) {
+      if (body.startFrom.type === "ORDER") {
+        throw new ApiError("VALIDATION_FAILED", "Starting from an order is not available yet. Start from a quote or add products.", { field: "startFrom" });
+      }
+      const src = await deps.prisma.quote.findFirst({ where: { id: body.startFrom.id, shop, companyId: buyer.companyId, deletedAt: null } });
+      if (!src) throw new ApiError("VALIDATION_FAILED", "Quote to copy not found for this company", { field: "startFrom" });
+      seed = (await customerVisibleLines(deps.prisma, src)).map((l) => ({ variantId: l.variantId, qty: l.qty, lineNote: l.lineNote ?? undefined }));
+    }
+    const wanted = [...seed, ...(body.lines ?? [])];
+    const pricing = await fetchPricing(deps, buyer, wanted.map((l) => l.variantId));
     const id = await deps.prisma.$transaction(async (tx) => {
       const job = await resolveJob(tx, deps, buyer, body);
       const quote = await createDraft(tx, deps, buyer, {
         title: body.title,
         job,
-        poNumber: job?.poNumber ?? null,
+        poNumber: body.poNumber ?? job?.poNumber ?? null,
+        neededBy: body.neededBy,
+        notesToSales: body.notesToSales,
         createdByStaffId: me.id,
         actor: "staff",
         actorId: me.id,
       });
-      for (const l of body.lines ?? []) await addLine(tx, quote.id, pricing.get(l.variantId)!, l.qty, { lineNote: l.lineNote, addedBy: "STAFF" });
+      if (body.shipTo) await tx.quote.update({ where: { id: quote.id }, data: { shipToAddress: body.shipTo as Prisma.InputJsonValue } });
+      for (const l of wanted) await addLine(tx, quote.id, pricing.get(l.variantId)!, l.qty, { lineNote: l.lineNote, addedBy: "STAFF" });
+      // Give the rep's pricing set its rows now so line ids stay stable from the first load of the editor.
+      if (wanted.length) await reconcileStaffSet(tx, quote.id);
       await refreshDerived(tx, quote.id);
       if (body.submit) {
         const locked = (await lockQuote(tx, quote.id))!;
@@ -299,6 +351,8 @@ export async function staffRoutes(app: FastifyInstance) {
       if (!(WORKING_STATUSES as readonly string[]).includes(quote.status)) {
         throw new ApiError("NOT_EDITABLE", "This quote can't be edited in its current status", { status: quote.status });
       }
+      const shared = isSharedMode(quote);
+      if (shared) assertRev(quote, body.rev);
       // A rep-opened DRAFT has no staff working set yet: seed it from the customer's lines so the editor's line ids resolve.
       if (quote.status === "DRAFT" && (await tx.quoteLine.count({ where: { quoteId: id, set: "STAFF" } })) === 0) {
         await materializeStaffSet(tx, id);
@@ -307,7 +361,8 @@ export async function staffRoutes(app: FastifyInstance) {
         const byOld = new Map(src.map((l, i) => [l.id, mapped[i]?.id]));
         body.lines = body.lines.map((l) => (l.id && byOld.has(l.id) ? { ...l, id: byOld.get(l.id)! } : l));
       }
-      await saveDraftRevision(tx, deps, id, body, async (v) => prices.get(v) ?? null);
+      await saveDraftRevision(tx, deps, id, body, async (v) => prices.get(v) ?? null, { shared });
+      if (shared) await bumpRev(tx, id);
     });
     return view(id, me);
   });
@@ -316,8 +371,156 @@ export async function staffRoutes(app: FastifyInstance) {
     const me = staffOf(req);
     const { id } = req.params as { id: string };
     await deps.prisma.$transaction(async (tx) => {
-      await getStaffQuoteRow(tx, deps, id, true);
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      // Make sure the pricing set mirrors what the customer and rep agreed on in the shared lines.
+      if (isSharedMode(quote)) await reconcileStaffSet(tx, id);
       await sendRevision(tx, deps, id, me);
+    });
+    return view(id, me);
+  });
+
+  // ---------------------------------------------------------------- share / unshare / delete (rep-created quotes)
+  /** Rep-created DRAFT or SHARED only; a customer's own private draft is never edited by staff. */
+  const requireSharedMode = (quote: { status: string; createdByStaffId: string | null }) => {
+    if (!isSharedMode(quote)) {
+      throw new ApiError("NOT_EDITABLE", "Only a rep-created draft or a shared quote can be edited this way", { status: quote.status });
+    }
+  };
+  /** Staff-set row id (what the editor shows) -> shared CUSTOMER-set line id. */
+  const toSharedLineId = async (tx: Parameters<typeof lockQuote>[0], quoteId: string, id: string): Promise<string> => {
+    const row = await tx.quoteLine.findFirst({ where: { id, quoteId, set: "STAFF" } });
+    if (row?.originLineId) return row.originLineId;
+    const shared = await tx.quoteLine.findFirst({ where: { id, quoteId, set: "CUSTOMER" } });
+    if (shared) return shared.id;
+    throw new ApiError("VALIDATION_FAILED", "Line not found on this quote", { field: "lineId", lineId: id });
+  };
+
+  app.post("/quotes/:id/share", async (req) => {
+    const me = staffOf(req);
+    const { id } = req.params as { id: string };
+    const body = parse(shareBody, req.body ?? {});
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      if (!quote.createdByStaffId) throw new ApiError("NOT_EDITABLE", "Only quotes a rep created can be shared for review", { status: quote.status });
+      if ((await customerLines(tx, id)).length === 0) throw new ApiError("VALIDATION_FAILED", "Add at least one line before sharing", { field: "lines" });
+      await reconcileStaffSet(tx, id);
+      const now = deps.now();
+      await applyTransition(tx, {
+        quote,
+        event: "SHARE",
+        actor: "staff",
+        actorId: me.id,
+        now,
+        data: { sharedAt: now, customerReady: false, rev: { increment: 1 }, ...(quote.assignedRepId ? {} : { assignedRep: { connect: { id: me.id } } }) },
+        payload: { notify: body.notify },
+      });
+      if (body.message) {
+        // Shown in the quote conversation. No NEW_MESSAGE event: the SHARE event already carries the notification.
+        await tx.message.create({ data: { quoteId: id, authorType: "STAFF", authorId: me.id, authorName: me.name, body: body.message, internal: false } });
+      }
+      await refreshDerived(tx, id);
+    });
+    return view(id, me);
+  });
+
+  app.post("/quotes/:id/unshare", async (req) => {
+    const me = staffOf(req);
+    const { id } = req.params as { id: string };
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      await applyTransition(tx, {
+        quote, event: "UNSHARE", actor: "staff", actorId: me.id, now: deps.now(),
+        data: { sharedAt: null, customerReady: false, rev: { increment: 1 } },
+      });
+      await refreshDerived(tx, id);
+    });
+    return view(id, me);
+  });
+
+  app.delete("/quotes/:id", async (req) => {
+    const me = staffOf(req);
+    const { id } = req.params as { id: string };
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      if (!quote.createdByStaffId) throw new ApiError("NOT_EDITABLE", "Only a rep-created draft can be deleted", { status: quote.status });
+      await applyTransition(tx, { quote, event: "DELETE", actor: "staff", actorId: me.id, now: deps.now(), data: { deletedAt: deps.now() } });
+    });
+    return view(id, me);
+  });
+
+  // ---------------------------------------------------------------- shared lines and comments (DRAFT rep-created / SHARED)
+  app.post("/quotes/:id/lines", async (req, reply) => {
+    const me = staffOf(req);
+    const { id } = req.params as { id: string };
+    const body = parse(addStaffLineBody, req.body);
+    const probe = await deps.prisma.quote.findFirst({ where: { id, shop } });
+    if (!probe) throw notFound();
+    const pricing = await deps.shopify.getVariantPricing({ companyLocationId: probe.companyLocationId ?? "", customerId: probe.customerId }, body.variantId);
+    if (!pricing) throw new ApiError("VALIDATION_FAILED", "Product variant not found", { field: "variantId", variantId: body.variantId });
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      requireSharedMode(quote);
+      const lineId = await addLine(tx, id, pricing, body.qty, { lineNote: body.lineNote, addedBy: "STAFF" });
+      const after = body.afterLineId ? await toSharedLineId(tx, id, body.afterLineId) : body.afterLineId;
+      await placeLineAfter(tx, id, lineId, after);
+      await afterSharedEdit(tx, quote);
+      await refreshDerived(tx, id);
+    });
+    return reply.status(201).send(await view(id, me));
+  });
+
+  app.delete("/quotes/:id/lines/:lineId", async (req) => {
+    const me = staffOf(req);
+    const { id, lineId } = req.params as { id: string; lineId: string };
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      requireSharedMode(quote);
+      await deleteSharedLine(tx, id, await toSharedLineId(tx, id, lineId));
+      await afterSharedEdit(tx, quote);
+      await refreshDerived(tx, id);
+    });
+    return view(id, me);
+  });
+
+  app.put("/quotes/:id/lines/order", async (req) => {
+    const me = staffOf(req);
+    const { id } = req.params as { id: string };
+    const body = parse(reorderBody, req.body);
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      requireSharedMode(quote);
+      assertRev(quote, body.rev);
+      const ids: string[] = [];
+      for (const l of body.lineIds) ids.push(await toSharedLineId(tx, id, l));
+      await reorderLines(tx, id, ids);
+      await afterSharedEdit(tx, quote);
+    });
+    return view(id, me);
+  });
+
+  app.post("/quotes/:id/comments", async (req, reply) => {
+    const me = staffOf(req);
+    const { id } = req.params as { id: string };
+    const body = parse(staffCommentBody, req.body);
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      requireSharedMode(quote);
+      const after = body.afterLineId ? await toSharedLineId(tx, id, body.afterLineId) : body.afterLineId;
+      await addComment(tx, deps, quote, { type: "STAFF", id: me.id, name: me.name }, { body: body.body, afterLineId: after, internal: body.internal });
+    });
+    return reply.status(201).send(await view(id, me));
+  });
+
+  app.delete("/quotes/:id/comments/:commentId", async (req) => {
+    const me = staffOf(req);
+    const { id, commentId } = req.params as { id: string; commentId: string };
+    await deps.prisma.$transaction(async (tx) => {
+      const quote = await getStaffQuoteRow(tx, deps, id, true);
+      requireSharedMode(quote);
+      const c = await tx.quoteComment.findFirst({ where: { id: commentId, quoteId: id } });
+      if (!c) throw notFound("Comment");
+      await tx.quoteComment.delete({ where: { id: commentId } });
+      if (!c.internal) await bumpRev(tx, id);
     });
     return view(id, me);
   });
