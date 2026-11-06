@@ -2,6 +2,9 @@
 
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
+## 2026-11-05
+- Fix: a DRAFT that a rep created for a customer (`createdByStaffId` set) is now private to staff. `scopeWhere` excludes it, so dealers at that location can no longer list, open, edit, submit or delete it, and it stays out of the storefront quote picker. It becomes visible when the rep sends it. New e2e test in `privacy-scoping.e2e.test.ts` (needs Postgres; not run here). Part of the rep-created quotes plan.
+
 ## 2026-10-23
 - Account pages on the storefront: `/pages/statement` and `/pages/account-info` in the dsg.direct theme (`theme-overrides/assets/dsg-account-pages.js`), same data and rules as the customer-account pages. New app-proxy mount `/proxy/a/*` (Shopify's signed `logged_in_customer_id` -> same company / Location admin / account_map checks via `BuyerResolver.resolveCustomer`); session tokens are not accepted there and proxy signatures are not accepted on `/a`. CLAUDE.md rule 9 now names both credentials.
 - Storefront theme: quote notification settings now live on the main site at `/pages/quote?tab=notifications` (new `theme-overrides/assets/dsg-quote-notifications.js`, tabs on the quotes page), same data and consent wording as the customer-account page. Review theme only; add the account-menu link after the theme is published.
