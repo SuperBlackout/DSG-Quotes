@@ -74,7 +74,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Add a line (DRAFT only). Price is snapshotted from the buyer's catalog. */
+        /** Add a line (DRAFT or SHARED). Price is snapshotted from the buyer's catalog. */
         post: operations["addCustomerQuoteLine"];
         delete?: never;
         options?: never;
@@ -95,12 +95,90 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Remove a line (DRAFT only) */
+        /** Remove a line (DRAFT or SHARED) */
         delete: operations["deleteCustomerQuoteLine"];
         options?: never;
         head?: never;
-        /** Change quantity or note (DRAFT only) */
+        /** Change quantity or note (DRAFT or SHARED) */
         patch: operations["updateCustomerQuoteLine"];
+        trace?: never;
+    };
+    "/c/quotes/{id}/lines/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Reorder lines (DRAFT or SHARED only)
+         * @description `lineIds` must contain every current line id exactly once. 409 `VERSION_MISMATCH` (with `details.currentRev`)
+         *     if `rev` is stale. Comments are anchored to the line above them and move with it.
+         */
+        put: operations["reorderCustomerQuoteLines"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/c/quotes/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a comment between lines (DRAFT or SHARED only)
+         * @description Customer comments are always customer-visible. Notifies the rep when the quote is SHARED.
+         */
+        post: operations["addCustomerQuoteComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/c/quotes/{id}/comments/{commentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a comment the customer wrote (DRAFT or SHARED only) */
+        delete: operations["deleteCustomerQuoteComment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/c/quotes/{id}/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tell the rep a SHARED draft looks right (no status change)
+         * @description Sets `customerReady`, flips `waitingOn` to `sales` and notifies the rep. Any later edit by either side clears it.
+         */
+        post: operations["markCustomerQuoteReady"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/c/quotes/{id}/submit": {
@@ -377,7 +455,145 @@ export interface paths {
         get: operations["getStaffQuote"];
         put?: never;
         post?: never;
+        /**
+         * Delete a rep-created DRAFT (soft delete to ARCHIVED)
+         * @description Only a DRAFT with `createdByStaffId` set. Anything shared or sent is declined, not deleted.
+         */
+        delete: operations["deleteStaffQuote"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * DRAFT to SHARED - invite the customer to review and collaborate
+         * @description Only rep-created drafts. Makes the quote visible to the customer's company location and notifies them (unless
+         *     `notify` is false). Not binding; prices are not final until `send`.
+         */
+        post: operations["shareStaffQuote"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/unshare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** SHARED back to a private DRAFT */
+        post: operations["unshareStaffQuote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/lines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add or insert a line on a DRAFT or SHARED quote
+         * @description Edits the shared line set (the one the customer sees while SHARED). `afterLineId` inserts below that line
+         *     (omit to append, `null` to insert at the top). Pricing and cost are still set with `draft-revision`.
+         */
+        post: operations["addStaffQuoteLine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/lines/{lineId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                lineId: components["parameters"]["LineId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a line from a DRAFT or SHARED quote */
+        delete: operations["deleteStaffQuoteLine"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/lines/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder lines on a DRAFT or SHARED quote */
+        put: operations["reorderStaffQuoteLines"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a comment between lines (DRAFT or SHARED)
+         * @description `internal: true` comments are staff only: never returned by any `/c` route and never notify the customer.
+         *     While the quote is a private DRAFT only internal comments are meaningful; customer-visible ones become visible on share.
+         */
+        post: operations["addStaffQuoteComment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/comments/{commentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a comment (any author) on a DRAFT or SHARED quote */
+        delete: operations["deleteStaffQuoteComment"];
         options?: never;
         head?: never;
         patch?: never;
@@ -528,6 +744,84 @@ export interface paths {
         put?: never;
         /** Post to the customer, or an internal note (internal true never notifies the customer) */
         post: operations["postStaffMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        /** Who gets customer-facing alerts for this quote, extra recipients added for it, and its recent send log */
+        get: operations["getStaffQuoteNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/notification-recipients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add an email, or a mobile number (needs the person to reply YES to a confirmation text), for this quote only */
+        post: operations["addStaffQuoteRecipient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/notification-recipients/{rid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                rid: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Stop notifying this extra recipient about the quote */
+        delete: operations["removeStaffQuoteRecipient"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/s/quotes/{id}/notification-recipients/{rid}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                rid: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send the confirmation text again to a number still waiting for YES */
+        post: operations["resendStaffQuoteRecipientOptIn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -818,6 +1112,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        QuoteExtraRecipient: {
+            id: string;
+            /** @enum {string} */
+            kind: "EMAIL" | "SMS";
+            address: string;
+            name?: string | null;
+            /** @enum {string} */
+            status: "ACTIVE" | "PENDING" | "OPTED_OUT";
+            addedBy?: string | null;
+            /** Format: date-time */
+            addedAt: string;
+            /** Format: date-time */
+            confirmedAt?: string | null;
+            requestSent?: boolean;
+        };
         Error: {
             /**
              * @description Stable machine code. Used values: BAD_REQUEST, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND,
@@ -826,7 +1135,8 @@ export interface components {
              *
              *     Client handling: `NOT_PURCHASABLE` (409, checkout) means the quote is not ACCEPTED or has expired; show the
              *     message and offer "Ask for a new quote" (duplicate). `VERSION_MISMATCH` (409, accept) means a newer version
-             *     was sent; reload and re-review the new version. `RATE_LIMITED` is reserved: rate limiting is deferred and
+             *     was sent; reload and re-review the new version. `VERSION_MISMATCH` on a SHARED/DRAFT line, comment or
+             *     reorder call carries `details.currentRev`: someone else changed the quote; reload and reapply. `RATE_LIMITED` is reserved: rate limiting is deferred and
              *     the API does not emit it yet.
              * @example INVALID_TRANSITION
              */
@@ -845,8 +1155,13 @@ export interface components {
          * @example USD
          */
         CurrencyCode: string;
-        /** @enum {string} */
-        QuoteStatus: "DRAFT" | "SUBMITTED" | "IN_REVIEW" | "QUOTE_READY" | "CHANGES_REQUESTED" | "ACCEPTED" | "ORDERED" | "EXPIRED" | "DECLINED" | "ARCHIVED";
+        /**
+         * @description `SHARED` = a rep-created draft the rep has shared with the customer for review. Customer and rep both edit lines
+         *     and comments; it is NOT a binding quote and cannot be accepted or bought. Only the rep's `send` moves it to
+         *     `QUOTE_READY`. Rep-created `DRAFT`s are invisible to the customer until shared or sent.
+         * @enum {string}
+         */
+        QuoteStatus: "DRAFT" | "SHARED" | "SUBMITTED" | "IN_REVIEW" | "QUOTE_READY" | "CHANGES_REQUESTED" | "ACCEPTED" | "ORDERED" | "EXPIRED" | "DECLINED" | "ARCHIVED";
         /** @enum {string} */
         WaitingOn: "customer" | "sales" | "none";
         Address: {
@@ -897,6 +1212,24 @@ export interface components {
             /** @description Customer-visible note on this line (written by the customer or the rep). */
             lineNote?: string | null;
             position: number;
+            /**
+             * @description Who added the line; lets the review UI tag rep-added and customer-added lines.
+             * @enum {string}
+             */
+            addedBy?: "CUSTOMER" | "STAFF";
+        };
+        /** @description A comment shown between lines. Anchored below `afterLineId` (null = above the first line) and moves with that line when lines are reordered. */
+        CustomerLineComment: {
+            id: string;
+            body: string;
+            afterLineId: string | null;
+            /** @enum {string} */
+            authorType: "CUSTOMER" | "STAFF";
+            authorName: string;
+            /** @description Written by the signed-in buyer; only these can be deleted. */
+            mine: boolean;
+            /** Format: date-time */
+            createdAt: string;
         };
         CustomerQuoteVersion: {
             versionNo: number;
@@ -940,6 +1273,10 @@ export interface components {
             canReopen: boolean;
             canDelete: boolean;
             canDecline: boolean;
+            /** @description DRAFT or SHARED: lines can be reordered and commented between. */
+            canReorder?: boolean;
+            /** @description SHARED and not already marked ready. */
+            canMarkReady?: boolean;
         };
         CustomerQuoteSummary: {
             id: string;
@@ -978,7 +1315,15 @@ export interface components {
             shipTo?: components["schemas"]["Address"] | null;
             notesToSales?: string | null;
             watchers?: string[];
-            /** @description Customer's working draft lines when DRAFT, otherwise the latest sent version's lines. */
+            /** @description Optimistic-concurrency counter for lines and comments while DRAFT or SHARED; send it back on reorder. */
+            rev?: number;
+            /** @description SHARED only: the customer has marked it ready for the rep. */
+            customerReady?: boolean;
+            /** @description Name of the rep who shared it; null unless the quote was rep-created. */
+            sharedBy?: string | null;
+            /** @description Customer-visible comments between lines (DRAFT or SHARED). Internal comments are never included. */
+            comments?: components["schemas"]["CustomerLineComment"][];
+            /** @description Shared working lines when DRAFT or SHARED, otherwise the latest sent version's lines. */
             lines: components["schemas"]["CustomerQuoteLine"][];
             /** @description Sent revisions only, ascending. */
             versions: components["schemas"]["CustomerQuoteVersion"][];
@@ -1010,6 +1355,31 @@ export interface components {
             variantId: string;
             qty: number;
             lineNote?: string;
+            /** @description Insert below this line. Omit to append; null inserts at the top. */
+            afterLineId?: string | null;
+        };
+        ReorderLinesRequest: {
+            /** @description Every current line id exactly once, in the new order. */
+            lineIds: string[];
+            rev: number;
+        };
+        AddCommentRequest: {
+            body: string;
+            /** @description Anchor below this line; omit to append at the end, null for the top. */
+            afterLineId?: string | null;
+        };
+        StaffAddCommentRequest: components["schemas"]["AddCommentRequest"] & {
+            /**
+             * @description Staff only; never shown to or notified to the customer.
+             * @default false
+             */
+            internal: boolean;
+        };
+        ShareQuoteRequest: {
+            /** @description Optional note included in the invitation to the customer. */
+            message?: string;
+            /** @default true */
+            notify: boolean;
         };
         UpdateLineRequest: {
             qty?: number;
@@ -1163,6 +1533,17 @@ export interface components {
             addedBy?: "CUSTOMER" | "STAFF" | "SYSTEM";
             position: number;
         };
+        StaffLineComment: {
+            id: string;
+            body: string;
+            afterLineId: string | null;
+            /** @enum {string} */
+            authorType: "CUSTOMER" | "STAFF";
+            authorName: string;
+            internal: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
         StaffQuoteVersion: {
             versionNo: number;
             /** Format: date-time */
@@ -1262,7 +1643,10 @@ export interface components {
             };
             /** @description Optional on PUT (omitted = unchanged). Always present on GET. */
             notifications?: {
-                /** @description Every quote alert to sales is copied to this address. It is also the only recipient when the assigned rep, team or managers have no usable email. Null = off. */
+                /**
+                 * Format: email
+                 * @description Every quote alert to sales is copied to this address. It is also the only recipient when the assigned rep, team or managers have no usable email. Null = off.
+                 */
                 copyAllAlertsTo?: string | null;
             };
         };
@@ -1311,6 +1695,10 @@ export interface components {
             assignedRepId?: string | null;
             assignedRepName?: string | null;
             teamId?: string | null;
+            /** @description Set when a rep created the quote on the customer's behalf. */
+            createdByStaffId?: string | null;
+            /** @description SHARED only: the customer marked it ready for the rep. */
+            customerReady?: boolean;
             currentVersion?: number;
             /** @description Number of line items (lines, not units) shown in inbox rows. */
             itemCount: number;
@@ -1358,6 +1746,12 @@ export interface components {
             watchers?: string[];
             draftOrderId?: string | null;
             orderId?: string | null;
+            /** @description Optimistic-concurrency counter for lines and comments while DRAFT or SHARED (same value the customer sees). */
+            rev?: number;
+            /** Format: date-time */
+            sharedAt?: string | null;
+            /** @description All comments between lines, including `internal` ones. */
+            comments?: components["schemas"]["StaffLineComment"][];
             /** @description Customer's most recent change-request text (editor callout). */
             latestChangeRequest?: string | null;
             /** @description Editable working revision (what Save draft stores). */
@@ -1383,6 +1777,18 @@ export interface components {
             title: string;
             jobId?: string;
             newJob?: components["schemas"]["NewJob"];
+            poNumber?: string;
+            /** Format: date */
+            neededBy?: string;
+            shipTo?: components["schemas"]["Address"];
+            /** @description Customer-visible job notes carried onto the quote. */
+            notesToSales?: string;
+            /** @description Seed the lines from a past quote or order of the same company. */
+            startFrom?: {
+                /** @enum {string} */
+                type: "QUOTE" | "ORDER";
+                id: string;
+            };
             lines?: components["schemas"]["AddLineRequest"][];
             /** @default false */
             submit: boolean;
@@ -1404,6 +1810,11 @@ export interface components {
             lineNote?: string | null;
         };
         DraftRevisionRequest: {
+            /**
+             * @description The `StaffQuote.rev` the editor loaded. On a DRAFT or SHARED quote a stale `rev` returns 409
+             *     `VERSION_MISMATCH` (`details.currentRev`) instead of overwriting lines the customer changed. Omitted = no check.
+             */
+            rev?: number;
             lines: components["schemas"]["StaffLineInput"][];
             freight?: components["schemas"]["Money"];
             /** Format: date-time */
@@ -1422,6 +1833,10 @@ export interface components {
                 accepted: number;
                 expiring: number;
                 all: number;
+                /** @description Rep-created DRAFTs created by the signed-in rep. */
+                my_drafts?: number;
+                /** @description SHARED quotes assigned to or created by the signed-in rep. */
+                shared?: number;
             };
             needsResponse: number;
             unassigned?: number;
@@ -1469,6 +1884,7 @@ export interface components {
     parameters: {
         QuoteId: string;
         LineId: string;
+        CommentId: string;
         Cursor: string;
         /** @description Page size, 1 to 100 (default 25). */
         Limit: number;
@@ -1708,6 +2124,75 @@ export interface operations {
                     "application/json": components["schemas"]["CustomerQuote"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    reorderCustomerQuoteLines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderLinesRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["CustomerQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    addCustomerQuoteComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddCommentRequest"];
+            };
+        };
+        responses: {
+            201: components["responses"]["CustomerQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteCustomerQuoteComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                commentId: components["parameters"]["CommentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["CustomerQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    markCustomerQuoteReady: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["CustomerQuoteOk"];
             default: components["responses"]["Error"];
         };
     };
@@ -2081,7 +2566,7 @@ export interface operations {
     listStaffQuotes: {
         parameters: {
             query?: {
-                tab?: "needs_response" | "unassigned" | "waiting_customer" | "accepted" | "expiring" | "all";
+                tab?: "needs_response" | "unassigned" | "waiting_customer" | "accepted" | "expiring" | "all" | "my_drafts" | "shared";
                 /** @description A staff id, `me` (the signed-in rep) or `unassigned` (no rep and no team). */
                 rep?: string;
                 team?: string;
@@ -2160,6 +2645,144 @@ export interface operations {
                     "application/json": components["schemas"]["StaffQuote"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteStaffQuote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    shareStaffQuote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ShareQuoteRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    unshareStaffQuote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    addStaffQuoteLine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddLineRequest"];
+            };
+        };
+        responses: {
+            201: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteStaffQuoteLine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                lineId: components["parameters"]["LineId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    reorderStaffQuoteLines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderLinesRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    addStaffQuoteComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StaffAddCommentRequest"];
+            };
+        };
+        responses: {
+            201: components["responses"]["StaffQuoteOk"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteStaffQuoteComment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                commentId: components["parameters"]["CommentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["StaffQuoteOk"];
             default: components["responses"]["Error"];
         };
     };
@@ -2337,6 +2960,11 @@ export interface operations {
                 "application/json": components["schemas"]["PostMessageRequest"] & {
                     /** @default false */
                     internal?: boolean;
+                    /** @description Which alert channels to use for this customer message (default both). At least one must be true; the customer's own notification settings still apply. */
+                    channels?: {
+                        email?: boolean;
+                        sms?: boolean;
+                    };
                 };
             };
         };
@@ -2348,6 +2976,124 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StaffMessage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getStaffQuoteNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recipients, extras and log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        recipients: {
+                            [key: string]: unknown;
+                        }[];
+                        extras: components["schemas"]["QuoteExtraRecipient"][];
+                        log: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addStaffQuoteRecipient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    kind: "EMAIL" | "SMS";
+                    address: string;
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Already on the quote (a pending number is re-sent its confirmation text) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteExtraRecipient"];
+                };
+            };
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteExtraRecipient"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeStaffQuoteRecipient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    resendStaffQuoteRecipientOptIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["QuoteId"];
+                rid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteExtraRecipient"];
                 };
             };
             default: components["responses"]["Error"];

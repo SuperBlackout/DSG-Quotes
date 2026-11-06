@@ -177,7 +177,7 @@ paths:
     post:
       tags: [customer]
       operationId: addCustomerQuoteLine
-      summary: Add a line (DRAFT only). Price is snapshotted from the buyer's catalog.
+      summary: Add a line (DRAFT or SHARED). Price is snapshotted from the buyer's catalog.
       requestBody:
         required: true
         content:
@@ -197,7 +197,7 @@ paths:
     patch:
       tags: [customer]
       operationId: updateCustomerQuoteLine
-      summary: Change quantity or note (DRAFT only)
+      summary: Change quantity or note (DRAFT or SHARED)
       requestBody:
         required: true
         content:
@@ -213,13 +213,66 @@ paths:
     delete:
       tags: [customer]
       operationId: deleteCustomerQuoteLine
-      summary: Remove a line (DRAFT only)
+      summary: Remove a line (DRAFT or SHARED)
       responses:
         "200":
           description: Updated quote
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CustomerQuote" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/lines/order:
+    put:
+      tags: [customer]
+      operationId: reorderCustomerQuoteLines
+      summary: Reorder lines (DRAFT or SHARED only)
+      description: |
+        `lineIds` must contain every current line id exactly once. 409 `VERSION_MISMATCH` (with `details.currentRev`)
+        if `rev` is stale. Comments are anchored to the line above them and move with it.
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReorderLinesRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/comments:
+    post:
+      tags: [customer]
+      operationId: addCustomerQuoteComment
+      summary: Add a comment between lines (DRAFT or SHARED only)
+      description: Customer comments are always customer-visible. Notifies the rep when the quote is SHARED.
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddCommentRequest" }
+      responses:
+        "201": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/comments/{commentId}:
+    delete:
+      tags: [customer]
+      operationId: deleteCustomerQuoteComment
+      summary: Delete a comment the customer wrote (DRAFT or SHARED only)
+      parameters:
+        - $ref: "#/components/parameters/QuoteId"
+        - $ref: "#/components/parameters/CommentId"
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /c/quotes/{id}/ready:
+    post:
+      tags: [customer]
+      operationId: markCustomerQuoteReady
+      summary: Tell the rep a SHARED draft looks right (no status change)
+      description: Sets `customerReady`, flips `waitingOn` to `sales` and notifies the rep. Any later edit by either side clears it.
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/CustomerQuoteOk" }
         default: { $ref: "#/components/responses/Error" }
   /c/quotes/{id}/submit:
     post:
@@ -499,7 +552,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [needs_response, unassigned, waiting_customer, accepted, expiring, all]
+            enum: [needs_response, unassigned, waiting_customer, accepted, expiring, all, my_drafts, shared]
         - name: rep
           in: query
           description: |
@@ -560,6 +613,118 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StaffQuote" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [staff]
+      operationId: deleteStaffQuote
+      summary: Delete a rep-created DRAFT (soft delete to ARCHIVED)
+      description: Only a DRAFT with `createdByStaffId` set. Anything shared or sent is declined, not deleted.
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/share:
+    post:
+      tags: [staff]
+      operationId: shareStaffQuote
+      summary: DRAFT to SHARED - invite the customer to review and collaborate
+      description: |
+        Only rep-created drafts. Makes the quote visible to the customer's company location and notifies them (unless
+        `notify` is false). Not binding; prices are not final until `send`.
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ShareQuoteRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/unshare:
+    post:
+      tags: [staff]
+      operationId: unshareStaffQuote
+      summary: SHARED back to a private DRAFT
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/lines:
+    post:
+      tags: [staff]
+      operationId: addStaffQuoteLine
+      summary: Add or insert a line on a DRAFT or SHARED quote
+      description: |
+        Edits the shared line set (the one the customer sees while SHARED). `afterLineId` inserts below that line
+        (omit to append, `null` to insert at the top). Pricing and cost are still set with `draft-revision`.
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddLineRequest" }
+      responses:
+        "201": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/lines/{lineId}:
+    parameters:
+      - $ref: "#/components/parameters/QuoteId"
+      - $ref: "#/components/parameters/LineId"
+    delete:
+      tags: [staff]
+      operationId: deleteStaffQuoteLine
+      summary: Remove a line from a DRAFT or SHARED quote
+      security: [{ staffSession: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/lines/order:
+    put:
+      tags: [staff]
+      operationId: reorderStaffQuoteLines
+      summary: Reorder lines on a DRAFT or SHARED quote
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReorderLinesRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/comments:
+    post:
+      tags: [staff]
+      operationId: addStaffQuoteComment
+      summary: Add a comment between lines (DRAFT or SHARED)
+      description: |
+        `internal: true` comments are staff only: never returned by any `/c` route and never notify the customer.
+        While the quote is a private DRAFT only internal comments are meaningful; customer-visible ones become visible on share.
+      security: [{ staffSession: [] }]
+      parameters: [{ $ref: "#/components/parameters/QuoteId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StaffAddCommentRequest" }
+      responses:
+        "201": { $ref: "#/components/responses/StaffQuoteOk" }
+        default: { $ref: "#/components/responses/Error" }
+  /s/quotes/{id}/comments/{commentId}:
+    delete:
+      tags: [staff]
+      operationId: deleteStaffQuoteComment
+      summary: Delete a comment (any author) on a DRAFT or SHARED quote
+      security: [{ staffSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/QuoteId"
+        - $ref: "#/components/parameters/CommentId"
+      responses:
+        "200": { $ref: "#/components/responses/StaffQuoteOk" }
         default: { $ref: "#/components/responses/Error" }
   /s/quotes/{id}/claim:
     post:
@@ -1219,6 +1384,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    CommentId:
+      name: commentId
+      in: path
+      required: true
+      schema: { type: string }
     Cursor:
       name: cursor
       in: query
@@ -1272,7 +1442,8 @@ components:
 
             Client handling: `NOT_PURCHASABLE` (409, checkout) means the quote is not ACCEPTED or has expired; show the
             message and offer "Ask for a new quote" (duplicate). `VERSION_MISMATCH` (409, accept) means a newer version
-            was sent; reload and re-review the new version. `RATE_LIMITED` is reserved: rate limiting is deferred and
+            was sent; reload and re-review the new version. `VERSION_MISMATCH` on a SHARED/DRAFT line, comment or
+            reorder call carries `details.currentRev`: someone else changed the quote; reload and reapply. `RATE_LIMITED` is reserved: rate limiting is deferred and
             the API does not emit it yet.
           example: INVALID_TRANSITION
         message: { type: string, example: "SUBMIT is not allowed from ORDERED" }
@@ -1292,7 +1463,11 @@ components:
         Money itself stays a plain decimal string; there is never a mix of currencies within one quote.
     QuoteStatus:
       type: string
-      enum: [DRAFT, SUBMITTED, IN_REVIEW, QUOTE_READY, CHANGES_REQUESTED, ACCEPTED, ORDERED, EXPIRED, DECLINED, ARCHIVED]
+      description: |
+        `SHARED` = a rep-created draft the rep has shared with the customer for review. Customer and rep both edit lines
+        and comments; it is NOT a binding quote and cannot be accepted or bought. Only the rep's `send` moves it to
+        `QUOTE_READY`. Rep-created `DRAFT`s are invisible to the customer until shared or sent.
+      enum: [DRAFT, SHARED, SUBMITTED, IN_REVIEW, QUOTE_READY, CHANGES_REQUESTED, ACCEPTED, ORDERED, EXPIRED, DECLINED, ARCHIVED]
     WaitingOn:
       type: string
       enum: [customer, sales, none]
@@ -1355,6 +1530,22 @@ components:
           nullable: true
           description: Customer-visible note on this line (written by the customer or the rep).
         position: { type: integer }
+        addedBy:
+          type: string
+          enum: [CUSTOMER, STAFF]
+          description: Who added the line; lets the review UI tag rep-added and customer-added lines.
+    CustomerLineComment:
+      type: object
+      required: [id, body, afterLineId, authorType, authorName, mine, createdAt]
+      description: A comment shown between lines. Anchored below `afterLineId` (null = above the first line) and moves with that line when lines are reordered.
+      properties:
+        id: { type: string }
+        body: { type: string, minLength: 1, maxLength: 2000 }
+        afterLineId: { type: string, nullable: true }
+        authorType: { type: string, enum: [CUSTOMER, STAFF] }
+        authorName: { type: string }
+        mine: { type: boolean, description: "Written by the signed-in buyer; only these can be deleted." }
+        createdAt: { type: string, format: date-time }
     CustomerQuoteVersion:
       type: object
       required: [versionNo, sentAt, subtotal, discountTotal, freight, total, lines]
@@ -1404,6 +1595,8 @@ components:
         canReopen: { type: boolean }
         canDelete: { type: boolean }
         canDecline: { type: boolean }
+        canReorder: { type: boolean, description: "DRAFT or SHARED: lines can be reordered and commented between." }
+        canMarkReady: { type: boolean, description: "SHARED and not already marked ready." }
     CustomerQuoteSummary:
       type: object
       required: [id, number, title, status, waitingOn, lineCount, currencyCode, total, unreadCount, updatedAt, actions]
@@ -1448,9 +1641,19 @@ components:
             watchers:
               type: array
               items: { type: string, format: email }
+            rev:
+              type: integer
+              minimum: 0
+              description: Optimistic-concurrency counter for lines and comments while DRAFT or SHARED; send it back on reorder.
+            customerReady: { type: boolean, description: "SHARED only: the customer has marked it ready for the rep." }
+            sharedBy: { type: string, nullable: true, description: "Name of the rep who shared it; null unless the quote was rep-created." }
+            comments:
+              type: array
+              description: Customer-visible comments between lines (DRAFT or SHARED). Internal comments are never included.
+              items: { $ref: "#/components/schemas/CustomerLineComment" }
             lines:
               type: array
-              description: Customer's working draft lines when DRAFT, otherwise the latest sent version's lines.
+              description: Shared working lines when DRAFT or SHARED, otherwise the latest sent version's lines.
               items: { $ref: "#/components/schemas/CustomerQuoteLine" }
             versions:
               type: array
@@ -1491,6 +1694,33 @@ components:
         variantId: { type: string }
         qty: { type: integer, minimum: 1, maximum: 100000 }
         lineNote: { type: string }
+        afterLineId:
+          type: string
+          nullable: true
+          description: Insert below this line. Omit to append; null inserts at the top.
+    ReorderLinesRequest:
+      type: object
+      required: [lineIds, rev]
+      properties:
+        lineIds: { type: array, items: { type: string }, description: "Every current line id exactly once, in the new order." }
+        rev: { type: integer, minimum: 0 }
+    AddCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 2000 }
+        afterLineId: { type: string, nullable: true, description: "Anchor below this line; omit to append at the end, null for the top." }
+    StaffAddCommentRequest:
+      allOf:
+        - $ref: "#/components/schemas/AddCommentRequest"
+        - type: object
+          properties:
+            internal: { type: boolean, default: false, description: "Staff only; never shown to or notified to the customer." }
+    ShareQuoteRequest:
+      type: object
+      properties:
+        message: { type: string, maxLength: 5000, description: "Optional note included in the invitation to the customer." }
+        notify: { type: boolean, default: true }
     UpdateLineRequest:
       type: object
       minProperties: 1
@@ -1665,6 +1895,17 @@ components:
         lineNote: { type: string, nullable: true, description: "Customer-visible note on the line (also shown as `CustomerQuoteLine.lineNote`). There is no per-line internal note; use the quote's internalNote." }
         addedBy: { type: string, enum: [CUSTOMER, STAFF, SYSTEM] }
         position: { type: integer }
+    StaffLineComment:
+      type: object
+      required: [id, body, afterLineId, authorType, authorName, internal, createdAt]
+      properties:
+        id: { type: string }
+        body: { type: string }
+        afterLineId: { type: string, nullable: true }
+        authorType: { type: string, enum: [CUSTOMER, STAFF] }
+        authorName: { type: string }
+        internal: { type: boolean }
+        createdAt: { type: string, format: date-time }
     StaffQuoteVersion:
       type: object
       required: [versionNo, sentAt, subtotal, freight, total, lines]
@@ -1859,6 +2100,8 @@ components:
         assignedRepId: { type: string, nullable: true }
         assignedRepName: { type: string, nullable: true }
         teamId: { type: string, nullable: true }
+        createdByStaffId: { type: string, nullable: true, description: "Set when a rep created the quote on the customer's behalf." }
+        customerReady: { type: boolean, description: "SHARED only: the customer marked it ready for the rep." }
         currentVersion: { type: integer }
         itemCount: { type: integer, minimum: 0, description: "Number of line items (lines, not units) shown in inbox rows." }
         currencyCode: { $ref: "#/components/schemas/CurrencyCode" }
@@ -1903,6 +2146,15 @@ components:
               items: { type: string, format: email }
             draftOrderId: { type: string, nullable: true }
             orderId: { type: string, nullable: true }
+            rev:
+              type: integer
+              minimum: 0
+              description: Optimistic-concurrency counter for lines and comments while DRAFT or SHARED (same value the customer sees).
+            sharedAt: { type: string, format: date-time, nullable: true }
+            comments:
+              type: array
+              description: All comments between lines, including `internal` ones.
+              items: { $ref: "#/components/schemas/StaffLineComment" }
             latestChangeRequest:
               type: string
               nullable: true
@@ -1938,6 +2190,17 @@ components:
         title: { type: string }
         jobId: { type: string }
         newJob: { $ref: "#/components/schemas/NewJob" }
+        poNumber: { type: string }
+        neededBy: { type: string, format: date }
+        shipTo: { $ref: "#/components/schemas/Address" }
+        notesToSales: { type: string, maxLength: 5000, description: "Customer-visible job notes carried onto the quote." }
+        startFrom:
+          type: object
+          required: [type, id]
+          description: Seed the lines from a past quote or order of the same company.
+          properties:
+            type: { type: string, enum: [QUOTE, ORDER] }
+            id: { type: string }
         lines:
           type: array
           items: { $ref: "#/components/schemas/AddLineRequest" }
@@ -1963,6 +2226,12 @@ components:
       type: object
       required: [lines]
       properties:
+        rev:
+          type: integer
+          minimum: 0
+          description: |
+            The `StaffQuote.rev` the editor loaded. On a DRAFT or SHARED quote a stale `rev` returns 409
+            `VERSION_MISMATCH` (`details.currentRev`) instead of overwriting lines the customer changed. Omitted = no check.
         lines:
           type: array
           items: { $ref: "#/components/schemas/StaffLineInput" }
@@ -1986,6 +2255,8 @@ components:
             accepted: { type: integer }
             expiring: { type: integer }
             all: { type: integer }
+            my_drafts: { type: integer, description: "Rep-created DRAFTs created by the signed-in rep." }
+            shared: { type: integer, description: "SHARED quotes assigned to or created by the signed-in rep." }
         needsResponse: { type: integer }
         unassigned: { type: integer }
         openValue: { $ref: "#/components/schemas/Money" }

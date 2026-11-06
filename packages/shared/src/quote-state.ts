@@ -4,6 +4,7 @@
 
 export type QuoteStatus =
   | "DRAFT"
+  | "SHARED" // rep-created draft shared with the customer for review + collaboration (not yet a binding quote)
   | "SUBMITTED"
   | "IN_REVIEW"
   | "QUOTE_READY"
@@ -25,7 +26,10 @@ export type QuoteEvent =
   | "ORDER_PLACED" // orders/create webhook for the linked draft order
   | "EXPIRE" // cron: expires_at passed
   | "DECLINE" // customer or rep closes it
-  | "DELETE"; // customer deletes a draft (soft delete → ARCHIVED)
+  | "DELETE" // customer deletes own draft, or a rep deletes a rep-created draft (soft delete → ARCHIVED)
+  | "SHARE" // rep shares a private draft with the customer for review (DRAFT → SHARED)
+  | "UNSHARE" // rep pulls a shared draft back to private (SHARED → DRAFT)
+  | "CUSTOMER_READY"; // customer tells the rep a shared draft looks right (SHARED → SHARED, no status change)
 
 export type Actor = "customer" | "staff" | "system";
 
@@ -36,7 +40,15 @@ const RULES: Record<QuoteStatus, Partial<Record<QuoteEvent, Rule>>> = {
     SUBMIT: { to: "SUBMITTED", by: ["customer", "staff"] },
     // Rep-created quotes start as DRAFT with no customer submission; the rep prices and sends them directly.
     SEND_REVISION: { to: "QUOTE_READY", by: ["staff"] },
-    DELETE: { to: "ARCHIVED", by: ["customer"] },
+    DELETE: { to: "ARCHIVED", by: ["customer", "staff"] },
+    SHARE: { to: "SHARED", by: ["staff"] },
+  },
+  SHARED: {
+    // Rep and customer both edit lines/comments while SHARED. Only the rep can make it binding.
+    UNSHARE: { to: "DRAFT", by: ["staff"] },
+    SEND_REVISION: { to: "QUOTE_READY", by: ["staff"] },
+    CUSTOMER_READY: { to: "SHARED", by: ["customer"] },
+    DECLINE: { to: "DECLINED", by: ["customer", "staff"] },
   },
   SUBMITTED: {
     WITHDRAW: { to: "DRAFT", by: ["customer"] },
@@ -102,14 +114,20 @@ export function isPurchasable(status: QuoteStatus, expiresAt: Date | null, now =
   return status === "ACCEPTED" && (!expiresAt || expiresAt.getTime() > now.getTime());
 }
 
-/** Customer may add/remove lines only on drafts. */
+/** Customer may add/remove/reorder lines and comment on drafts and on quotes a rep has shared for review. */
 export function customerCanEditLines(status: QuoteStatus): boolean {
-  return status === "DRAFT";
+  return status === "DRAFT" || status === "SHARED";
 }
 
 /** Which side owes the next action — drives inbox tabs and the "Waiting on you" filter. */
-export function waitingOn(status: QuoteStatus): "customer" | "sales" | "none" {
+export function waitingOn(
+  status: QuoteStatus,
+  opts: { customerReady?: boolean } = {},
+): "customer" | "sales" | "none" {
   switch (status) {
+    // A shared draft waits on the customer until they mark it ready, then on sales.
+    case "SHARED":
+      return opts.customerReady ? "sales" : "customer";
     case "DRAFT":
     case "QUOTE_READY":
     case "ACCEPTED":
@@ -128,6 +146,8 @@ export const NOTIFY: Partial<Record<QuoteEvent, "sales" | "customer" | "both">> 
   SUBMIT: "sales",
   REQUEST_CHANGES: "sales",
   SEND_REVISION: "customer",
+  SHARE: "customer",
+  CUSTOMER_READY: "sales",
   ACCEPT: "both",
   ORDER_PLACED: "both",
   EXPIRE: "customer",
