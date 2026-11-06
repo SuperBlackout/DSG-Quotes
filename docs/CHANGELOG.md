@@ -2,6 +2,9 @@
 
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
+## 2026-11-05
+- Contract (rep-created quotes, collaboration): new `SHARED` quote status and events `SHARE`, `UNSHARE`, `CUSTOMER_READY`; a rep can `DELETE` a private draft; customers can edit lines on `DRAFT` and `SHARED`; `waitingOn("SHARED", { customerReady })`. OpenAPI adds share/unshare/ready, staff and customer line insert (`afterLineId`), reorder (`PUT .../lines/order`, `rev` concurrency), between-line comments (`internal` is staff-only), rep draft delete, `my_drafts`/`shared` inbox tabs, and richer `StaffCreateQuoteRequest`. Contract only; the API and UI follow in stacked PRs. Until those land, `Record<QuoteStatus, …>` maps in `app/` and `extensions/my-quotes` do not typecheck.
+
 ## 2026-10-23
 - Account pages on the storefront: `/pages/statement` and `/pages/account-info` in the dsg.direct theme (`theme-overrides/assets/dsg-account-pages.js`), same data and rules as the customer-account pages. New app-proxy mount `/proxy/a/*` (Shopify's signed `logged_in_customer_id` -> same company / Location admin / account_map checks via `BuyerResolver.resolveCustomer`); session tokens are not accepted there and proxy signatures are not accepted on `/a`. CLAUDE.md rule 9 now names both credentials.
 - Storefront theme: quote notification settings now live on the main site at `/pages/quote?tab=notifications` (new `theme-overrides/assets/dsg-quote-notifications.js`, tabs on the quotes page), same data and consent wording as the customer-account page. Review theme only; add the account-menu link after the theme is published.

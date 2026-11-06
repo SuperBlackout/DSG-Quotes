@@ -13,12 +13,12 @@ import {
 } from "../src/quote-state";
 
 const STATUSES: QuoteStatus[] = [
-  "DRAFT", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED",
+  "DRAFT", "SHARED", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED",
   "ACCEPTED", "ORDERED", "EXPIRED", "DECLINED", "ARCHIVED",
 ];
 const EVENTS: QuoteEvent[] = [
   "SUBMIT", "WITHDRAW", "CLAIM", "SEND_REVISION", "REQUEST_CHANGES", "ACCEPT",
-  "REOPEN", "ORDER_PLACED", "EXPIRE", "DECLINE", "DELETE",
+  "REOPEN", "ORDER_PLACED", "EXPIRE", "DECLINE", "DELETE", "SHARE", "UNSHARE", "CUSTOMER_READY",
 ];
 const ACTORS: Actor[] = ["customer", "staff", "system"];
 
@@ -26,7 +26,14 @@ const ACTORS: Actor[] = ["customer", "staff", "system"];
 // Deliberately NOT derived from the implementation so the test is a real second source of truth.
 const C = "customer", S = "staff", Y = "system";
 const EXPECTED: Record<string, Record<string, [QuoteStatus, Actor[]]>> = {
-  DRAFT: { SUBMIT: ["SUBMITTED", [C, S]], SEND_REVISION: ["QUOTE_READY", [S]], DELETE: ["ARCHIVED", [C]] },
+  DRAFT: {
+    SUBMIT: ["SUBMITTED", [C, S]], SEND_REVISION: ["QUOTE_READY", [S]],
+    DELETE: ["ARCHIVED", [C, S]], SHARE: ["SHARED", [S]],
+  },
+  SHARED: {
+    UNSHARE: ["DRAFT", [S]], SEND_REVISION: ["QUOTE_READY", [S]],
+    CUSTOMER_READY: ["SHARED", [C]], DECLINE: ["DECLINED", [C, S]],
+  },
   SUBMITTED: {
     WITHDRAW: ["DRAFT", [C]], CLAIM: ["IN_REVIEW", [S]],
     SEND_REVISION: ["QUOTE_READY", [S]], DECLINE: ["DECLINED", [C, S]],
@@ -63,8 +70,8 @@ describe("transition: exhaustive status x event x actor", () => {
     }
   }
 
-  it("covers all 10 x 11 x 3 = 330 combinations", () => {
-    expect(STATUSES.length * EVENTS.length * ACTORS.length).toBe(330);
+  it("covers all 11 x 14 x 3 = 462 combinations", () => {
+    expect(STATUSES.length * EVENTS.length * ACTORS.length).toBe(462);
   });
 });
 
@@ -118,6 +125,21 @@ describe("lifecycle happy paths", () => {
     expect(s).toBe("IN_REVIEW");
     expect(transition(s, "SEND_REVISION", "staff")).toBe("QUOTE_READY");
   });
+  it("rep-created: draft -> shared -> quote ready -> ordered", () => {
+    let s: QuoteStatus = "DRAFT";
+    s = transition(s, "SHARE", "staff");
+    s = transition(s, "CUSTOMER_READY", "customer");
+    expect(s).toBe("SHARED");
+    s = transition(s, "SEND_REVISION", "staff");
+    s = transition(s, "ACCEPT", "customer");
+    s = transition(s, "ORDER_PLACED", "system");
+    expect(s).toBe("ORDERED");
+  });
+  it("shared can be pulled back to private and cannot be accepted by the customer", () => {
+    expect(transition("SHARED", "UNSHARE", "staff")).toBe("DRAFT");
+    expect(canTransition("SHARED", "ACCEPT", "customer")).toBe(false);
+    expect(canTransition("SHARED", "SUBMIT", "customer")).toBe(false);
+  });
   it("withdraw returns to draft and can be resubmitted", () => {
     expect(transition(transition("DRAFT", "SUBMIT", "customer"), "WITHDRAW", "customer")).toBe("DRAFT");
   });
@@ -149,19 +171,26 @@ describe("isPurchasable", () => {
 
 describe("customerCanEditLines", () => {
   for (const status of STATUSES) {
-    it(`${status}`, () => expect(customerCanEditLines(status)).toBe(status === "DRAFT"));
+    it(`${status}`, () => expect(customerCanEditLines(status)).toBe(status === "DRAFT" || status === "SHARED"));
   }
 });
 
 describe("waitingOn", () => {
   const exp: Record<QuoteStatus, "customer" | "sales" | "none"> = {
-    DRAFT: "customer", QUOTE_READY: "customer", ACCEPTED: "customer",
+    DRAFT: "customer", SHARED: "customer", QUOTE_READY: "customer", ACCEPTED: "customer",
     SUBMITTED: "sales", IN_REVIEW: "sales", CHANGES_REQUESTED: "sales",
     ORDERED: "none", EXPIRED: "none", DECLINED: "none", ARCHIVED: "none",
   };
   for (const status of STATUSES) {
     it(`${status} -> ${exp[status]}`, () => expect(waitingOn(status)).toBe(exp[status]));
   }
+});
+
+describe("waitingOn: shared draft", () => {
+  it("flips to sales once the customer marks it ready", () => {
+    expect(waitingOn("SHARED", { customerReady: true })).toBe("sales");
+    expect(waitingOn("SHARED", { customerReady: false })).toBe("customer");
+  });
 });
 
 describe("NOTIFY map", () => {
