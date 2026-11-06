@@ -1,0 +1,25 @@
+{
+  "renderApiBase": "https://api.render.com/v1",
+  "services": {
+    "web": "dsg-quotes-web",
+    "admin": "dsg-quotes-admin",
+    "worker": "dsg-quotes-worker"
+  },
+  "healthPath": "/healthz",
+  "fallbackHealthUrls": {
+    "web": "https://dsg-quotes-web.onrender.com",
+    "admin": "https://dsg-quotes-admin.onrender.com"
+  },
+  "migrationSuccessPhrase": "All migrations have been successfully applied",
+  "migrationNoopPhrase": "No pending migrations to apply",
+  "migrationFailurePhrases": ["Migration failed to apply", "P3009", "P3018", "P1001"],
+  "deployTimeoutSeconds": 1200,
+  "pollIntervalSeconds": 10,
+  "theme": {
+    "assetsDir": "theme-overrides/assets",
+    "globs": ["*.js", "*.css"],
+    "defaultSelection": ["dsg-quotes-page.js"],
+    "store": ""
+  },
+  "dbSuitePackages": ["api", "worker", "e2e", "@dsg/identity", "@dsg/statement"]
+}

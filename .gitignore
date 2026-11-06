@@ -8,4 +8,6 @@ coverage
 *.log
 !.env.example
 .claude/
+scripts/release/logs/
 apps/api/test/.route-hits.jsonl
+__pycache__/

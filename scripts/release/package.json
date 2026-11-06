@@ -1,0 +1,8 @@
+{
+  "name": "release-tool",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node run-tests.cjs"
+  }
+}

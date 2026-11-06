@@ -442,6 +442,8 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.19.43)(jsdom@25.0.1)
 
+  scripts/release: {}
+
   tests/e2e:
     devDependencies:
       '@axe-core/playwright':
