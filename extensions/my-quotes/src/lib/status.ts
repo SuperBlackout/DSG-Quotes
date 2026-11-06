@@ -11,6 +11,7 @@ type BadgeTone = "auto" | "neutral" | "critical";
 
 const BASE_LABEL: Record<QuoteStatus, string> = {
   DRAFT: "Draft",
+  SHARED: "Shared for review",
   SUBMITTED: "Submitted",
   IN_REVIEW: "In review",
   QUOTE_READY: "Quote ready",
@@ -85,6 +86,7 @@ export function rowActions(q: CustomerQuoteSummary): RowAction[] {
 
   if (a.canBuy) out.push(A.buy);
   else if (a.canAccept || a.canRequestChanges) out.push(A.review);
+  else if (q.status === "SHARED") out.push({ ...A.review, label: "Review draft" });
 
   if (a.canSubmit) out.push(A.submit);
   if (a.canDelete) out.push(A.delete);
@@ -106,6 +108,9 @@ export function quoteSubline(q: CustomerQuoteSummary): string {
   switch (q.status) {
     case "DRAFT":
       parts.push("not submitted");
+      break;
+    case "SHARED":
+      parts.push("shared by your rep for review");
       break;
     case "SUBMITTED":
       parts.push("sent to sales team");
@@ -160,7 +165,8 @@ export type BannerActionId =
   | "withdraw"
   | "reopen"
   | "ask-new-quote"
-  | "view-order";
+  | "view-order"
+  | "mark-ready";
 
 export interface BannerAction {
   id: BannerActionId;
@@ -222,6 +228,18 @@ export function statusBanner(q: CustomerQuote, now: Date = new Date()): StatusBa
         heading: "This quote can no longer be purchased",
         body: "It has expired or changed since you accepted it. Ask for a new quote and your rep will refresh the pricing.",
         actions: [{ id: "ask-new-quote", label: "Ask for a new quote", variant: "primary" }],
+      };
+    }
+
+    case "SHARED": {
+      const ready = q.customerReady === true;
+      return {
+        tone: ready ? "success" : "info",
+        heading: ready ? "You told your rep this looks right" : `${rep} shared this draft with you`,
+        body: ready
+          ? "Your rep will review your changes and send the final quote. You can keep editing; that tells them to look again."
+          : "This is not a binding quote yet. Reorder items, change quantities, remove items or leave comments between lines. Tell your rep when it looks right and they will send the final quote with prices.",
+        actions: a.canMarkReady ? [{ id: "mark-ready", label: "Looks right", variant: "primary" }] : [],
       };
     }
 

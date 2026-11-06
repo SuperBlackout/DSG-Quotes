@@ -26,6 +26,7 @@ export const NO_ACTIONS: CustomerQuoteActions = {
 /** Actions as the API would return them per status (server-computed; fixtures only mimic them). */
 export const ACTIONS_BY_STATUS: Record<QuoteStatus, CustomerQuoteActions> = {
   DRAFT: { ...NO_ACTIONS, canEditLines: true, canEditHeader: true, canSubmit: true, canDelete: true },
+  SHARED: { ...NO_ACTIONS, canEditLines: true, canReorder: true, canMarkReady: true, canDecline: true },
   SUBMITTED: { ...NO_ACTIONS, canWithdraw: true, canDecline: true },
   IN_REVIEW: { ...NO_ACTIONS, canDecline: true },
   QUOTE_READY: { ...NO_ACTIONS, canAccept: true, canRequestChanges: true, canDecline: true },
@@ -39,6 +40,7 @@ export const ACTIONS_BY_STATUS: Record<QuoteStatus, CustomerQuoteActions> = {
 
 const WAITING = {
   DRAFT: "customer",
+  SHARED: "customer",
   SUBMITTED: "sales",
   IN_REVIEW: "sales",
   QUOTE_READY: "customer",

@@ -128,6 +128,13 @@ export function createStaffClient(opts: ClientOptions) {
     approveFloor: (id: string, body: { lineIds?: string[]; note?: string } = {}) =>
       request<StaffQuote>("POST", `${q(id)}/approve-floor`, body),
     reopen: (id: string) => request<StaffQuote>("POST", `${q(id)}/reopen`),
+    share: (id: string, body: { message?: string; notify?: boolean } = {}) => request<StaffQuote>("POST", `${q(id)}/share`, body),
+    unshare: (id: string) => request<StaffQuote>("POST", `${q(id)}/unshare`),
+    deleteQuote: (id: string) => request<StaffQuote>("DELETE", q(id)),
+    reorderLines: (id: string, body: { lineIds: string[]; rev: number }) => request<StaffQuote>("PUT", `${q(id)}/lines/order`, body),
+    addComment: (id: string, body: { body: string; afterLineId?: string | null; internal?: boolean }) =>
+      request<StaffQuote>("POST", `${q(id)}/comments`, body),
+    deleteComment: (id: string, commentId: string) => request<StaffQuote>("DELETE", `${q(id)}/comments/${commentId}`),
     decline: (id: string, body: { reason?: string } = {}) => request<StaffQuote>("POST", `${q(id)}/decline`, body),
     getNotifications: (id: string) => request<QuoteNotifications>("GET", `${q(id)}/notifications`),
     addNotificationRecipient: (id: string, body: { kind: "EMAIL" | "SMS"; address: string; name?: string }) =>

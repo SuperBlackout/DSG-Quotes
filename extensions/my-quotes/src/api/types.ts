@@ -15,6 +15,7 @@ export type CustomerQuote = Schemas["CustomerQuote"];
 export type CustomerQuoteLine = Schemas["CustomerQuoteLine"];
 export type CustomerQuoteVersion = Schemas["CustomerQuoteVersion"];
 export type CustomerQuoteActions = Schemas["CustomerQuoteActions"];
+export type CustomerLineComment = Schemas["CustomerLineComment"];
 export type CustomerMessage = Schemas["CustomerMessage"];
 
 export type CreateQuoteRequest = Schemas["CreateQuoteRequest"];

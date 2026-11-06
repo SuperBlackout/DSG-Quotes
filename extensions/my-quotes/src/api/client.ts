@@ -174,6 +174,14 @@ export function createApiClient(opts: ApiClientOptions) {
     submitQuote: (id: string, body: { notesToSales?: string; neededBy?: string; poNumber?: string } = {}) =>
       request<CustomerQuote>("POST", `${q(id)}/submit`, body),
     withdrawQuote: (id: string) => request<CustomerQuote>("POST", `${q(id)}/withdraw`),
+    /** Shared-for-review quotes (DRAFT or SHARED): line edits, reorder, comments, and "looks right". */
+    updateLine: (id: string, lineId: string, body: { qty?: number; lineNote?: string | null }) =>
+      request<CustomerQuote>("PATCH", `${q(id)}/lines/${encodeURIComponent(lineId)}`, body),
+    deleteLine: (id: string, lineId: string) => request<CustomerQuote>("DELETE", `${q(id)}/lines/${encodeURIComponent(lineId)}`),
+    reorderLines: (id: string, body: { lineIds: string[]; rev: number }) => request<CustomerQuote>("PUT", `${q(id)}/lines/order`, body),
+    addComment: (id: string, body: { body: string; afterLineId?: string | null }) => request<CustomerQuote>("POST", `${q(id)}/comments`, body),
+    deleteComment: (id: string, commentId: string) => request<CustomerQuote>("DELETE", `${q(id)}/comments/${encodeURIComponent(commentId)}`),
+    markReady: (id: string) => request<CustomerQuote>("POST", `${q(id)}/ready`),
     /** `versionNo` is the version the customer saw; the API answers 409 VERSION_MISMATCH if stale. */
     acceptQuote: (id: string, versionNo?: number) =>
       request<CustomerQuote>("POST", `${q(id)}/accept`, versionNo === undefined ? {} : { versionNo }),

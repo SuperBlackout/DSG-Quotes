@@ -32,6 +32,7 @@ import { CommitField } from "../components/CommitField";
 import { Conversation } from "../components/Conversation";
 import { CustomerPreview } from "../components/CustomerPreview";
 import { LinesTable } from "../components/LinesTable";
+import { SharedPanel } from "../components/SharedPanel";
 import { ErrorBanner, LoadingPage, StatusBadge, errorMessage, useNow } from "../components/common";
 
 interface EditorData {
@@ -91,12 +92,13 @@ function QuoteEditor({ data }: { data: EditorData }) {
   const savedState = useMemo(() => stateFromQuote(quote), [quote]);
   const dirty = isDirty(state, savedState);
 
-  const [busy, setBusy] = useState<null | "save" | "send" | "claim" | "assign" | "approve" | "reopen" | "decline">(null);
+  const [busy, setBusy] = useState<null | "save" | "send" | "claim" | "assign" | "approve" | "reopen" | "decline" | "share" | "unshare" | "delete" | "shared-edit">(null);
   const [error, setError] = useState<string | null>(null);
   const [floorIds, setFloorIds] = useState<string[]>([]);
   const [approvalRequested, setApprovalRequested] = useState(false);
   const [discountText, setDiscountText] = useState("5");
   const [declineReason, setDeclineReason] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
 
   const { me } = data;
   const perms = permissionsFor(me);
@@ -105,6 +107,9 @@ function QuoteEditor({ data }: { data: EditorData }) {
   const contact = contactSummary(quote);
   const actions = quoteActions(quote.status);
   const readOnly = !actions.canEdit;
+  // Only quotes a rep created can be shared; a customer's own private draft is never edited or shared by staff.
+  const repOwned = !!quote.createdByStaffId;
+  const sharedMode = repOwned && (quote.status === "DRAFT" || quote.status === "SHARED");
   const versionNo = nextVersionNo(quote);
   const lastSent = [...quote.versions].sort((a, b) => b.versionNo - a.versionNo)[0];
   const changes = useMemo(() => diffAgainstVersion(state.lines, lastSent?.lines), [state.lines, lastSent]);
@@ -216,6 +221,41 @@ function QuoteEditor({ data }: { data: EditorData }) {
     }
   };
 
+  /** Reorder / comment / share calls change the shared document on the server, then replace the local copy. */
+  const sharedEdit = async (fn: () => Promise<StaffQuote>, toast?: string): Promise<boolean> => {
+    const q = await run("shared-edit", fn);
+    if (!q) return false;
+    // Keep the editor's unsaved pricing edits out of this path: the panel is disabled while dirty.
+    adopt(q);
+    if (toast) shopify.toast.show(toast);
+    return true;
+  };
+
+  const share = async () => {
+    const q = await run("share", () => api.share(quote.id, { message: shareMessage.trim() || undefined }));
+    if (q) {
+      adopt(q);
+      setShareMessage("");
+      shopify.toast.show("Shared with the customer");
+    }
+  };
+
+  const unshare = async () => {
+    const q = await run("unshare", () => api.unshare(quote.id));
+    if (q) {
+      adopt(q);
+      shopify.toast.show("Back to a private draft");
+    }
+  };
+
+  const deleteDraft = async () => {
+    const q = await run("delete", () => api.deleteQuote(quote.id));
+    if (q) {
+      shopify.toast.show("Draft deleted");
+      window.location.assign("/app");
+    }
+  };
+
   const reopen = async () => {
     const q = await run("reopen", () => api.reopen(quote.id));
     if (q) adopt(q);
@@ -280,6 +320,21 @@ function QuoteEditor({ data }: { data: EditorData }) {
         <StatusBadge status={quote.status} />
         {actions.canEdit ? <s-badge tone="warning">{dirty ? `Editing v${versionNo} draft · unsaved` : `Editing v${versionNo} draft`}</s-badge> : null}
       </s-stack>
+      {repOwned && actions.canShare ? (
+        <s-button slot="secondary-actions" commandFor="share-modal" command="--show" disabled={busy !== null || dirty || state.lines.length === 0}>
+          Share with customer
+        </s-button>
+      ) : null}
+      {repOwned && actions.canUnshare ? (
+        <s-button slot="secondary-actions" onClick={unshare} loading={busy === "unshare"} disabled={busy !== null}>
+          Unshare
+        </s-button>
+      ) : null}
+      {repOwned && actions.canDelete ? (
+        <s-button slot="secondary-actions" tone="critical" commandFor="delete-modal" command="--show" disabled={busy !== null}>
+          Delete draft
+        </s-button>
+      ) : null}
       <s-button slot="secondary-actions" commandFor="preview-modal" command="--show">
         Preview as customer
       </s-button>
@@ -307,6 +362,21 @@ function QuoteEditor({ data }: { data: EditorData }) {
       {quote.latestChangeRequest ? (
         <s-banner tone="warning" heading={`Customer asked for changes${statusLine ? ` · ${statusLine} ago` : ""}`}>
           <s-paragraph>“{quote.latestChangeRequest}” — {quote.customerName}</s-paragraph>
+        </s-banner>
+      ) : null}
+      {quote.status === "DRAFT" && repOwned ? (
+        <s-banner tone="info" heading="Private draft">
+          The customer cannot see this yet. Share it when you want their review, or send it as a quote when it is final.
+        </s-banner>
+      ) : null}
+      {quote.status === "SHARED" ? (
+        <s-banner
+          tone={quote.customerReady ? "success" : "info"}
+          heading={quote.customerReady ? `${quote.customerName} marked this ready` : `Shared with ${quote.customerName} for review`}
+        >
+          {quote.customerReady
+            ? "Check their changes and comments, then send it as the binding quote."
+            : "They can add items, comment and reorder. Sending it as a quote makes it binding and ends the review."}
         </s-banner>
       ) : null}
       {readOnly ? (
@@ -386,6 +456,17 @@ function QuoteEditor({ data }: { data: EditorData }) {
           </s-box>
         ) : null}
       </s-section>
+
+      {sharedMode ? (
+        <SharedPanel
+          quote={quote}
+          disabled={dirty || readOnly}
+          busy={busy !== null}
+          onReorder={(ids) => void sharedEdit(() => api.reorderLines(quote.id, { lineIds: ids, rev: quote.rev ?? 0 }))}
+          onAddComment={(c) => sharedEdit(() => api.addComment(quote.id, c), "Comment added")}
+          onDeleteComment={(cid) => void sharedEdit(() => api.deleteComment(quote.id, cid))}
+        />
+      ) : null}
 
       {/* ------------------------------------------------------------------ lines */}
       <s-section heading="Line items" padding="none" accessibilityLabel="Line items">
@@ -568,6 +649,31 @@ function QuoteEditor({ data }: { data: EditorData }) {
         </s-button>
         <s-button slot="secondary-actions" commandFor="send-modal" command="--hide">
           Cancel
+        </s-button>
+      </s-modal>
+
+      <s-modal id="share-modal" heading={`Share with ${quote.customerName}?`}>
+        <s-stack gap="small">
+          <s-text>
+            {quote.customerName} can see these items, add items, comment between lines and reorder. Your prices and costs stay private, and nothing is binding until you send it as a quote.
+          </s-text>
+          <s-text-area label="Message to the customer (optional)" rows={3} value={shareMessage} onInput={(e) => setShareMessage(e.currentTarget.value)} />
+        </s-stack>
+        <s-button slot="primary-action" variant="primary" commandFor="share-modal" command="--hide" onClick={share}>
+          Share for review
+        </s-button>
+        <s-button slot="secondary-actions" commandFor="share-modal" command="--hide">
+          Cancel
+        </s-button>
+      </s-modal>
+
+      <s-modal id="delete-modal" heading="Delete this draft?">
+        <s-text>This private draft is removed. This cannot be undone.</s-text>
+        <s-button slot="primary-action" variant="primary" tone="critical" commandFor="delete-modal" command="--hide" onClick={deleteDraft}>
+          Delete draft
+        </s-button>
+        <s-button slot="secondary-actions" commandFor="delete-modal" command="--hide">
+          Keep draft
         </s-button>
       </s-modal>
 

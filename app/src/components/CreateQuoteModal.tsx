@@ -15,6 +15,10 @@ export function CreateQuoteModal({ onCreated }: { onCreated: (id: string) => voi
   const [customer, setCustomer] = useState<StaffCustomer | null>(null);
   const [locationId, setLocationId] = useState("");
   const [title, setTitle] = useState("");
+  const [jobName, setJobName] = useState("");
+  const [po, setPo] = useState("");
+  const [neededBy, setNeededBy] = useState("");
+  const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,6 +84,10 @@ export function CreateQuoteModal({ onCreated }: { onCreated: (id: string) => voi
         customerId: customer.customerId,
         ...(locationId ? { companyLocationId: locationId } : {}),
         title: title.trim(),
+        ...(jobName.trim() ? { newJob: { name: jobName.trim(), ...(po.trim() ? { poNumber: po.trim() } : {}) } } : {}),
+        ...(po.trim() ? { poNumber: po.trim() } : {}),
+        ...(/^\d{4}-\d{2}-\d{2}$/.test(neededBy) ? { neededBy } : {}),
+        ...(notes.trim() ? { notesToSales: notes.trim() } : {}),
         submit: false,
       });
       onCreated(q.id);
@@ -139,6 +147,12 @@ export function CreateQuoteModal({ onCreated }: { onCreated: (id: string) => voi
           </s-select>
         ) : null}
         <s-text-field label="Quote title" value={title} onInput={(e) => setTitle(e.currentTarget.value)} />
+        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(160px, 1fr))" gap="base">
+          <s-text-field label="Job name (optional)" value={jobName} onInput={(e) => setJobName(e.currentTarget.value)} />
+          <s-text-field label="PO number (optional)" value={po} onInput={(e) => setPo(e.currentTarget.value)} />
+          <s-date-field label="Needed by (optional)" value={neededBy} onChange={(e) => setNeededBy(e.currentTarget.value)} />
+        </s-grid>
+        <s-text-area label="Note for the customer (optional)" rows={2} value={notes} onInput={(e) => setNotes(e.currentTarget.value)} />
       </s-stack>
       <s-button slot="primary-action" variant="primary" loading={busy} onClick={submit}>
         Create

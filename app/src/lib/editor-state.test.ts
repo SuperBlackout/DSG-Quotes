@@ -4,6 +4,8 @@ import {
   contactSummary,
   dateInputToIso,
   diffAgainstVersion,
+  INBOX_TABS,
+  STATUS_LABEL,
   flaggedLineIds,
   formatMoneyWhole,
   hasPendingSnapshot,
@@ -217,6 +219,22 @@ describe("workflow", () => {
     expect(quoteActions("IN_REVIEW")).toMatchObject({ canClaim: false, canSend: true });
     expect(quoteActions("ACCEPTED")).toMatchObject({ canReopen: true, canSend: false, canEdit: false });
     expect(quoteActions("ORDERED")).toMatchObject({ canSend: false, canDecline: false, canReopen: false });
+  });
+
+  it("shared review: a draft can be shared and deleted, a shared quote unshared and sent, never the reverse", () => {
+    expect(quoteActions("DRAFT")).toMatchObject({ canShare: true, canDelete: true, canUnshare: false, canSend: true });
+    expect(quoteActions("SHARED")).toMatchObject({ canShare: false, canUnshare: true, canSend: true, canDelete: false, canDecline: true, canEdit: true });
+    expect(quoteActions("QUOTE_READY")).toMatchObject({ canShare: false, canUnshare: false });
+  });
+
+  it("carries the quote rev into the save request so a stale save is rejected, and omits it when absent", () => {
+    expect(toDraftRequest(stateFromQuote(quote({ rev: 7 })))).toMatchObject({ rev: 7 });
+    expect("rev" in toDraftRequest(stateFromQuote(quote()))).toBe(false);
+  });
+
+  it("labels the new status and offers the My drafts and Shared inbox tabs", () => {
+    expect(STATUS_LABEL.SHARED).toBe("Shared for review");
+    expect(INBOX_TABS.map((t) => t.id)).toEqual(expect.arrayContaining(["my_drafts", "shared"]));
   });
 });
 
