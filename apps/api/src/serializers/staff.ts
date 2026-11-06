@@ -1,4 +1,4 @@
-import type { Event, Job, Message, Quote, QuoteLine, QuoteVersion, Staff } from "@prisma/client";
+import type { Event, Job, Message, Quote, QuoteComment, QuoteLine, QuoteVersion, Staff } from "@prisma/client";
 import { waitingOn, type QuoteStatus } from "shared";
 import type { Schemas } from "shared";
 import { isBelowFloor, isCostUnknown } from "../domain/lines";
@@ -76,14 +76,16 @@ export function staffSummary(q: QuoteRow): Schemas["StaffQuoteSummary"] {
     displayNumber: displayNumber(q.number),
     title: q.title,
     status: q.status,
-    waitingOn: waitingOn(s),
-    waitingSince: waitingOn(s) === "none" ? null : iso(q.statusChangedAt),
+    waitingOn: waitingOn(s, { customerReady: q.customerReady }),
+    waitingSince: waitingOn(s, { customerReady: q.customerReady }) === "none" ? null : iso(q.statusChangedAt),
     customerName: q.customerName,
     companyName: q.companyName,
     jobName: q.job?.name ?? null,
     assignedRepId: q.assignedRepId,
     assignedRepName: q.assignedRep?.name ?? null,
     teamId: q.teamId,
+    createdByStaffId: q.createdByStaffId,
+    customerReady: q.customerReady,
     currentVersion: q.currentVersion,
     itemCount: q.lineCount,
     currencyCode: q.currencyCode,
@@ -104,6 +106,21 @@ export interface StaffQuoteParts {
   floor: Decimal;
   latestChangeRequest: string | null;
   nextVersionNo: number;
+  comments?: QuoteComment[];
+  /** CUSTOMER-set line id -> STAFF row id, so comment anchors point at the rows the editor shows. */
+  staffIdByOrigin?: Map<string, string>;
+}
+
+export function staffComment(c: QuoteComment, staffIdByOrigin: Map<string, string>): Schemas["StaffLineComment"] {
+  return {
+    id: c.id,
+    body: c.body,
+    afterLineId: c.afterLineId ? (staffIdByOrigin.get(c.afterLineId) ?? c.afterLineId) : null,
+    authorType: c.authorType === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+    authorName: c.authorName ?? (c.authorType === "CUSTOMER" ? "Customer" : "DSG"),
+    internal: c.internal,
+    createdAt: iso(c.createdAt),
+  };
 }
 
 export function staffQuote(p: StaffQuoteParts): Schemas["StaffQuote"] {
@@ -125,6 +142,9 @@ export function staffQuote(p: StaffQuoteParts): Schemas["StaffQuote"] {
     watchers: asEmails(q.watchers),
     draftOrderId: q.draftOrderId,
     orderId: q.orderId,
+    rev: q.rev,
+    sharedAt: q.sharedAt ? iso(q.sharedAt) : null,
+    comments: (p.comments ?? []).slice().sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map((c) => staffComment(c, p.staffIdByOrigin ?? new Map())),
     latestChangeRequest: p.latestChangeRequest,
     workingLines: p.working.slice().sort((a, b) => a.position - b.position).map((l) => staffLine(l, p.floor)),
     workingFreight: fmt(q.workingFreight),

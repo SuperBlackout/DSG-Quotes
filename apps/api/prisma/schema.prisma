@@ -15,6 +15,7 @@ datasource db {
 
 enum QuoteStatus {
   DRAFT
+  SHARED
   SUBMITTED
   IN_REVIEW
   QUOTE_READY
@@ -111,6 +112,9 @@ model Quote {
   assignedRep         Staff?         @relation(fields: [assignedRepId], references: [id])
   teamId              String?
   createdByStaffId    String?
+  rev                 Int            @default(0) // bumped on every line/comment change while DRAFT or SHARED (optimistic concurrency)
+  sharedAt            DateTime?
+  customerReady       Boolean        @default(false) // SHARED: customer marked it ready for the rep; cleared by any later edit
   status              QuoteStatus    @default(DRAFT)
   statusChangedAt     DateTime       @default(now())
   currentVersion      Int            @default(0) // 0 = never sent, 1..n = sent revisions
@@ -145,6 +149,7 @@ model Quote {
   versions            QuoteVersion[]
   lines               QuoteLine[]
   messages            Message[]
+  comments            QuoteComment[]
   events              Event[]
 
   @@unique([shop, number])
@@ -193,9 +198,25 @@ model QuoteLine {
   floorApprovedById String?
   addedBy       AuthorType    @default(CUSTOMER)
   position      Int
+  originLineId  String? // STAFF rows only: the CUSTOMER-set line this pricing row mirrors while DRAFT/SHARED
 
   @@index([quoteId, set])
   @@index([versionId])
+}
+
+model QuoteComment {
+  id          String     @id @default(cuid())
+  quoteId     String
+  quote       Quote      @relation(fields: [quoteId], references: [id])
+  afterLineId String? // anchored below this CUSTOMER-set line; null = above the first line
+  authorType  AuthorType
+  authorId    String?
+  authorName  String?
+  body        String
+  internal    Boolean    @default(false) // staff-only: never returned by /c routes
+  createdAt   DateTime   @default(now())
+
+  @@index([quoteId, createdAt])
 }
 
 model Message {

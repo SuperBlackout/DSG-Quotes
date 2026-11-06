@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
-import type { QuoteEvent } from "shared";
+import { customerCanEditLines, type QuoteEvent } from "shared";
 import { z } from "zod";
 import { customerAuth } from "../auth/middleware";
 import { calendarDate, dateOnlyToDate } from "../dates";
@@ -18,7 +18,9 @@ import {
   scopeWhere,
   setActiveQuote,
 } from "../domain/customerQuotes";
-import { customerLines, customerVisibleLines, materializeStaffSet, refreshDerived } from "../domain/lines";
+import { afterSharedEdit, addComment, assertRev, deleteSharedLine } from "../domain/collab";
+import { bumpRev } from "../domain/lines";
+import { customerLines, customerVisibleLines, materializeStaffSet, placeLineAfter, refreshDerived, reorderLines } from "../domain/lines";
 import { applyRouting } from "../domain/routing";
 import { applyTransition, writeEvent } from "../domain/transitions";
 import { ApiError, notFound } from "../errors";
@@ -67,7 +69,14 @@ const updateQuoteBody = z
   })
   .partial()
   .refine((o) => Object.keys(o).length > 0, "At least one field is required");
-const addLineBody = z.object({ variantId: z.string().min(1), qty: z.number().int().min(1).max(100000), lineNote: z.string().max(1000).optional() });
+const addLineBody = z.object({
+  variantId: z.string().min(1),
+  qty: z.number().int().min(1).max(100000),
+  lineNote: z.string().max(1000).optional(),
+  afterLineId: z.string().nullable().optional(),
+});
+const reorderBody = z.object({ lineIds: z.array(z.string()).min(1).max(500), rev: z.number().int().min(0) });
+const commentBody = z.object({ body: z.string().trim().min(1).max(2000), afterLineId: z.string().nullable().optional() });
 const updateLineBody = z
   .object({ qty: z.number().int().min(1).max(100000), lineNote: z.string().max(1000).nullable() })
   .partial()
@@ -108,7 +117,7 @@ const uploadUrlBody = z.object({ name: z.string().min(1).max(255), size: z.numbe
 /** `limit` is 1..100; larger values are clamped to 100 (the storefront popover asks for 100). */
 const limitParam = z.coerce.number().int().min(1).default(25).transform((n) => Math.min(n, 100));
 const listQuery = z.object({
-  status: z.enum(["DRAFT", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED", "ACCEPTED", "ORDERED", "EXPIRED", "DECLINED", "ARCHIVED"]).optional(),
+  status: z.enum(["DRAFT", "SHARED", "SUBMITTED", "IN_REVIEW", "QUOTE_READY", "CHANGES_REQUESTED", "ACCEPTED", "ORDERED", "EXPIRED", "DECLINED", "ARCHIVED"]).optional(),
   jobId: z.string().optional(),
   q: z.string().max(200).optional(),
   cursor: z.string().optional(),
@@ -153,7 +162,7 @@ async function runCustomerTransition(deps: AppDeps, buyer: BuyerContext, id: str
     });
     await o.post?.(tx, quote);
     await refreshDerived(tx, id);
-    return loadCustomerView(tx, deps, id);
+    return loadCustomerView(tx, deps, id, buyer.customerId);
   });
   if (failure) throw failure;
   if (o.afterCommit && before) await o.afterCommit(before);
@@ -179,6 +188,13 @@ function submitOptions(deps: AppDeps, body: z.infer<typeof submitBody>): RunOpti
       await applyRouting(tx, deps, quote.id);
     },
   };
+}
+
+/** Lines/comments are editable while the customer's draft is private (DRAFT) or a rep has shared it for review (SHARED). */
+function requireEditable(status: string) {
+  if (!customerCanEditLines(status as Parameters<typeof customerCanEditLines>[0])) {
+    throw new ApiError("NOT_EDITABLE", "Lines can only be changed while the quote is a draft or shared for review", { status });
+  }
 }
 
 function requireDraft(status: string) {
@@ -234,7 +250,7 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
         actorId: buyer.customerId,
       });
       if (body.setActive) await setActiveQuote(tx, deps, buyer, quote.id);
-      return loadCustomerView(tx, deps, quote.id);
+      return loadCustomerView(tx, deps, quote.id, buyer.customerId);
     });
     return reply.status(201).send(view);
   });
@@ -277,7 +293,7 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
       await refreshDerived(tx, id);
       return id;
     });
-    const view = body.submit ? await runCustomerTransition(deps, buyer, quoteId, submitOptions(deps, {})) : await deps.prisma.$transaction((tx) => loadCustomerView(tx, deps, quoteId));
+    const view = body.submit ? await runCustomerTransition(deps, buyer, quoteId, submitOptions(deps, {})) : await deps.prisma.$transaction((tx) => loadCustomerView(tx, deps, quoteId, buyer.customerId));
     return reply.status(201).send(view);
   });
 
@@ -286,7 +302,7 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
     const { id } = req.params as { id: string };
     return deps.prisma.$transaction(async (tx) => {
       await getScopedQuote(tx, deps, buyerOf(req), id);
-      return loadCustomerView(tx, deps, id);
+      return loadCustomerView(tx, deps, id, buyerOf(req).customerId);
     });
   });
 
@@ -314,7 +330,7 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
       }
       await tx.quote.update({ where: { id }, data });
       await writeEvent(tx, id, "UPDATE_HEADER", "customer", buyer.customerId, { fields: Object.keys(body) }, deps.now());
-      return loadCustomerView(tx, deps, id);
+      return loadCustomerView(tx, deps, id, buyer.customerId);
     });
   });
 
@@ -334,10 +350,12 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
     const pricing = await fetchPricing(deps, buyer, [body.variantId]);
     const view = await deps.prisma.$transaction(async (tx) => {
       const quote = await getScopedQuote(tx, deps, buyer, id, true);
-      requireDraft(quote.status);
-      await addLine(tx, id, pricing.get(body.variantId)!, body.qty, { lineNote: body.lineNote, addedBy: "CUSTOMER" });
+      requireEditable(quote.status);
+      const lineId = await addLine(tx, id, pricing.get(body.variantId)!, body.qty, { lineNote: body.lineNote, addedBy: "CUSTOMER" });
+      await placeLineAfter(tx, id, lineId, body.afterLineId);
+      await afterSharedEdit(tx, quote);
       await refreshDerived(tx, id);
-      return loadCustomerView(tx, deps, id);
+      return loadCustomerView(tx, deps, id, buyer.customerId);
     });
     return reply.status(201).send(view);
   });
@@ -348,15 +366,16 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
     const body = parse(updateLineBody, req.body);
     return deps.prisma.$transaction(async (tx) => {
       const quote = await getScopedQuote(tx, deps, buyer, id, true);
-      requireDraft(quote.status);
+      requireEditable(quote.status);
       const line = await tx.quoteLine.findFirst({ where: { id: lineId, quoteId: id, set: "CUSTOMER" } });
       if (!line) throw notFound("Line");
       await tx.quoteLine.update({
         where: { id: lineId },
         data: { ...(body.qty !== undefined ? { qty: body.qty } : {}), ...(body.lineNote !== undefined ? { lineNote: body.lineNote } : {}) },
       });
+      await afterSharedEdit(tx, quote);
       await refreshDerived(tx, id);
-      return loadCustomerView(tx, deps, id);
+      return loadCustomerView(tx, deps, id, buyer.customerId);
     });
   });
 
@@ -365,13 +384,62 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
     const { id, lineId } = req.params as { id: string; lineId: string };
     return deps.prisma.$transaction(async (tx) => {
       const quote = await getScopedQuote(tx, deps, buyer, id, true);
-      requireDraft(quote.status);
+      requireEditable(quote.status);
       const line = await tx.quoteLine.findFirst({ where: { id: lineId, quoteId: id, set: "CUSTOMER" } });
       if (!line) throw notFound("Line");
-      await tx.quoteLine.delete({ where: { id: lineId } });
+      await deleteSharedLine(tx, id, lineId);
+      await afterSharedEdit(tx, quote);
       await refreshDerived(tx, id);
-      return loadCustomerView(tx, deps, id);
+      return loadCustomerView(tx, deps, id, buyer.customerId);
     });
+  });
+
+  // ---------------------------------------------------------------- reorder, comments, ready (DRAFT or SHARED)
+  app.put("/quotes/:id/lines/order", async (req) => {
+    const buyer = buyerOf(req);
+    const { id } = req.params as { id: string };
+    const body = parse(reorderBody, req.body);
+    return deps.prisma.$transaction(async (tx) => {
+      const quote = await getScopedQuote(tx, deps, buyer, id, true);
+      requireEditable(quote.status);
+      assertRev(quote, body.rev);
+      await reorderLines(tx, id, body.lineIds);
+      await afterSharedEdit(tx, quote);
+      return loadCustomerView(tx, deps, id, buyer.customerId);
+    });
+  });
+
+  app.post("/quotes/:id/comments", async (req, reply) => {
+    const buyer = buyerOf(req);
+    const { id } = req.params as { id: string };
+    const body = parse(commentBody, req.body);
+    const view = await deps.prisma.$transaction(async (tx) => {
+      const quote = await getScopedQuote(tx, deps, buyer, id, true);
+      requireEditable(quote.status);
+      await addComment(tx, deps, quote, { type: "CUSTOMER", id: buyer.customerId, name: buyer.name }, { body: body.body, afterLineId: body.afterLineId, internal: false });
+      return loadCustomerView(tx, deps, id, buyer.customerId);
+    });
+    return reply.status(201).send(view);
+  });
+
+  app.delete("/quotes/:id/comments/:commentId", async (req) => {
+    const buyer = buyerOf(req);
+    const { id, commentId } = req.params as { id: string; commentId: string };
+    return deps.prisma.$transaction(async (tx) => {
+      const quote = await getScopedQuote(tx, deps, buyer, id, true);
+      requireEditable(quote.status);
+      // Only the buyer's own, customer-visible comments; anyone else's (or an internal one) is a plain 404.
+      const c = await tx.quoteComment.findFirst({ where: { id: commentId, quoteId: id, internal: false, authorType: "CUSTOMER", authorId: buyer.customerId } });
+      if (!c) throw notFound("Comment");
+      await tx.quoteComment.delete({ where: { id: commentId } });
+      await bumpRev(tx, id);
+      return loadCustomerView(tx, deps, id, buyer.customerId);
+    });
+  });
+
+  app.post("/quotes/:id/ready", async (req) => {
+    const { id } = req.params as { id: string };
+    return runCustomerTransition(deps, buyerOf(req), id, { event: "CUSTOMER_READY", data: () => ({ customerReady: true }) });
   });
 
   // ---------------------------------------------------------------- transitions
@@ -488,7 +556,7 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
       await writeEvent(tx, copy.id, "DUPLICATED_FROM", "customer", buyer.customerId, { sourceQuoteId: id }, deps.now());
       await setActiveQuote(tx, deps, buyer, copy.id);
       await refreshDerived(tx, copy.id);
-      return loadCustomerView(tx, deps, copy.id);
+      return loadCustomerView(tx, deps, copy.id, buyer.customerId);
     });
     return reply.status(201).send(view);
   });
@@ -504,7 +572,7 @@ export async function customerRoutes(app: FastifyInstance, opts: { mode: "direct
     const q = parse(pdfQuery, req.query);
     const { view, companyName } = await deps.prisma.$transaction(async (tx) => {
       const quote = await getScopedQuote(tx, deps, buyerOf(req), id);
-      return { view: await loadCustomerView(tx, deps, id), companyName: quote.companyName };
+      return { view: await loadCustomerView(tx, deps, id, buyerOf(req).customerId), companyName: quote.companyName };
     });
     const current = Math.max(0, ...view.versions.map((v) => v.versionNo));
     const wanted = q.version ?? current;
