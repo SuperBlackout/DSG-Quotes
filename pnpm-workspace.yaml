@@ -4,3 +4,4 @@ packages:
   - "tests/*"
   - "app"
   - "extensions/*"
+  - "scripts/release"

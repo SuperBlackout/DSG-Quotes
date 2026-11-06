@@ -2,6 +2,9 @@
 
 Newest first. Every PR adds a line. Lead writes a gate report at each phase gate.
 
+## 2026-11-06
+- Release tool: `pnpm release` runs a guided, confirm-every-step release (preflight, Render web then admin then optional worker with a migration-log check, `shopify app deploy`, selected theme assets, health checks, local release tag). Lives in the new `scripts/release/` folder (belongs to the lead); `--dry-run`, `--yes`, `--only`, `--skip`. Python unit tests run in `pnpm test`. See `scripts/release/README.md`.
+
 ## 2026-11-05
 - Contract (rep-created quotes, collaboration): new `SHARED` quote status and events `SHARE`, `UNSHARE`, `CUSTOMER_READY`; a rep can `DELETE` a private draft; customers can edit lines on `DRAFT` and `SHARED`; `waitingOn("SHARED", { customerReady })`. OpenAPI adds share/unshare/ready, staff and customer line insert (`afterLineId`), reorder (`PUT .../lines/order`, `rev` concurrency), between-line comments (`internal` is staff-only), rep draft delete, `my_drafts`/`shared` inbox tabs, and richer `StaffCreateQuoteRequest`. Contract only; the API and UI follow in stacked PRs. Until those land, `Record<QuoteStatus, …>` maps in `app/` and `extensions/my-quotes` do not typecheck.
 - Backend for shared review of rep-created quotes: `SHARED` status, `rev` / `sharedAt` / `customerReady` on `Quote`, `QuoteLine.originLineId`, new `QuoteComment` table (migration `20261105000000_shared_quotes`). Rep: `POST /s/quotes/:id/share|unshare`, `DELETE /s/quotes/:id` (own draft), line add/insert/delete/reorder and comments (`internal` is staff-only). Customer: line insert (`afterLineId`), `PUT .../lines/order`, comments, `POST .../ready`, all on DRAFT and SHARED. `draft-revision` takes `rev` (409 `VERSION_MISMATCH` when stale) and keeps rep prices private until send. Inbox tabs `my_drafts` and `shared`. Worker emails for `SHARE` / `CUSTOMER_READY` are not built yet.
