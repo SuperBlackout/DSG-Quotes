@@ -186,3 +186,45 @@ describe("cross-company access is 404 on every customer route (rule 3)", () => {
     }
   });
 });
+
+describe("a rep's private draft is invisible to the customer until the rep sends it (rep-created quotes, phase 1)", () => {
+  const w = useWorld();
+
+  it("Dana can't list, open, edit, submit or delete a draft a rep created for her; it appears once sent", async () => {
+    const created = ok(await w.rep1.post("/s/quotes", { customerId: F.DANA.id, title: "Rep draft", lines: [{ variantId: F.V_PIPE, qty: 2 }] }), 201, "rep creates draft");
+    expect(created.status).toBe("DRAFT");
+    const id = created.id as string;
+    const mine = ok(await w.dana.post("/c/quotes", { title: "Dana's own draft" }), 201, "dana's own draft");
+
+    // Hidden from every customer route.
+    for (const url of ["/c/quotes", "/c/quotes?status=DRAFT"]) {
+      const ids = ok(await w.dana.get(url), 200, url).items.map((i: any) => i.id);
+      expect(ids, url).not.toContain(id);
+      expect(ids, `${url} keeps Dana's own draft`).toContain(mine.id);
+    }
+    for (const [name, call] of [
+      ["get", () => w.dana.get(`/c/quotes/${id}`)],
+      ["patch", () => w.dana.patch(`/c/quotes/${id}`, { title: "hijack" })],
+      ["add line", () => w.dana.post(`/c/quotes/${id}/lines`, { variantId: F.V_VALVE, qty: 1 })],
+      ["submit", () => w.dana.post(`/c/quotes/${id}/submit`)],
+      ["delete", () => w.dana.del(`/c/quotes/${id}`)],
+      ["messages", () => w.dana.get(`/c/quotes/${id}/messages`)],
+    ] as const) {
+      const r = await call();
+      expect(r.status, name).toBe(404);
+    }
+    const row = await w.prisma.quote.findUniqueOrThrow({ where: { id }, select: { status: true, title: true } });
+    expect(row).toEqual({ status: "DRAFT", title: "Rep draft" });
+
+    // The rep still sees it, in the inbox's All tab.
+    const all = ok(await w.rep1.get("/s/quotes?tab=all"), 200, "inbox all").items.map((i: any) => i.id);
+    expect(all).toContain(id);
+
+    // Sending makes it a normal quote the customer can open.
+    await reprice(w.rep1, id, {}); // the first save seeds the rep's working set from the draft
+    ok(await w.rep1.post(`/s/quotes/${id}/send`), 200, "send");
+    const seen = ok(await w.dana.get(`/c/quotes/${id}`), 200, "customer view after send");
+    expect(seen.status).toBe("QUOTE_READY");
+    expect(ok(await w.dana.get("/c/quotes"), 200, "list after send").items.map((i: any) => i.id)).toContain(id);
+  });
+});
