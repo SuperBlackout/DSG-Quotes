@@ -129,3 +129,21 @@ describe("statusBanner (screen 4)", () => {
     expect(statusBanner(quote({ status: "ORDERED", orderId: null }), now).actions).toEqual([]);
   });
 });
+
+describe("SHARED: a draft a rep shared for review", () => {
+  it("is labelled and gets a Review draft action, never Buy or Submit", () => {
+    expect(statusLabel({ status: "SHARED", currentVersion: 0 })).toBe("Shared for review");
+    const acts = rowActions(summary({ status: "SHARED" }));
+    expect(acts.map((a) => a.id)).toEqual(["review"]);
+    expect(acts[0]).toMatchObject({ label: "Review draft" });
+  });
+
+  it("banner offers 'Looks right' until the customer has said so, then waits on the rep", () => {
+    const open = statusBanner(quote({ status: "SHARED", actions: ACTIONS_BY_STATUS.SHARED, assignedRepName: "Marco Reyes" }));
+    expect(open.heading).toBe("Marco Reyes shared this draft with you");
+    expect(open.actions.map((a) => a.id)).toEqual(["mark-ready"]);
+    const done = statusBanner(quote({ status: "SHARED", customerReady: true, actions: { ...ACTIONS_BY_STATUS.SHARED, canMarkReady: false } }));
+    expect(done.tone).toBe("success");
+    expect(done.actions).toEqual([]);
+  });
+});

@@ -34,7 +34,7 @@ a.mq-link:focus-visible,.mq-qty:focus-visible{outline:2px solid #2f6ea8;outline-
  .mq-actions .btn{flex:1 1 100%}.mq-next .btn{width:100%}
 }`;
   document.head.appendChild(Object.assign(document.createElement('style'), { textContent: POLISH }));
-  const LABEL = { DRAFT: 'Draft', SUBMITTED: 'Sent to DSG', IN_REVIEW: 'In review', QUOTE_READY: 'Ready for you', CHANGES_REQUESTED: 'Changes requested', ACCEPTED: 'Accepted', ORDERED: 'Ordered', EXPIRED: 'Expired', DECLINED: 'Declined', WITHDRAWN: 'Withdrawn' };
+  const LABEL = { DRAFT: 'Draft', SHARED: 'Shared for review', SUBMITTED: 'Sent to DSG', IN_REVIEW: 'In review', QUOTE_READY: 'Ready for you', CHANGES_REQUESTED: 'Changes requested', ACCEPTED: 'Accepted', ORDERED: 'Ordered', EXPIRED: 'Expired', DECLINED: 'Declined', WITHDRAWN: 'Withdrawn' };
   const WAIT = { customer: 'Waiting on you', sales: 'DSG is working on it', none: '' };
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -47,6 +47,7 @@ a.mq-link:focus-visible,.mq-qty:focus-visible{outline:2px solid #2f6ea8;outline-
   const cleanTitle = t => String(t || '').replace(/^(\S+(?:\s+\S+){0,2}?)\s+\1(?=\s|$)/i, '$1');
   const NEXT = {
     DRAFT: ['Draft: not sent yet', 'Review your items, then send it to DSG for pricing.', 'info'],
+    SHARED: ['Shared with you for review', 'Your DSG rep shared this draft. Open My Quotes in your account to reorder items and leave comments; prices come in the final quote.', 'info'],
     SUBMITTED: ['Sent to DSG', 'A rep will price it, usually the same business day. We will email you when it is ready.', 'warn'],
     IN_REVIEW: ['DSG is pricing your quote', 'You will get an email when it is ready. You can message your rep below.', 'warn'],
     QUOTE_READY: ['Your quote is ready', 'Review the prices, then accept it to buy at these prices.', 'go'],

@@ -5,6 +5,7 @@ import type { CustomerQuote } from "../api/types";
 import { AcceptModal } from "../components/AcceptModal";
 import { Conversation } from "../components/Conversation";
 import { ItemsPanel } from "../components/ItemsPanel";
+import { ReviewPanel } from "../components/ReviewPanel";
 import { JobDetails } from "../components/JobDetails";
 import { RequestChangesModal } from "../components/RequestChangesModal";
 import { StatusBannerView } from "../components/StatusBannerView";
@@ -60,6 +61,11 @@ export function QuoteDetail({ id }: { id: string }) {
       }
       case "withdraw": {
         const res = await action.run("withdraw", () => api().withdrawQuote(q.id));
+        if (res) quote.set(res);
+        return;
+      }
+      case "mark-ready": {
+        const res = await action.run("mark-ready", () => api().markReady(q.id));
         if (res) quote.set(res);
         return;
       }
@@ -153,13 +159,17 @@ export function QuoteDetail({ id }: { id: string }) {
           <s-grid gridTemplateColumns={`${WIDE_900} 2fr 1fr, 1fr`} gap="base" alignItems="start">
             <s-stack direction="block" gap="base">
               <JobDetails quote={q} onQuote={quote.set} />
-              <ItemsPanel
-                quote={q}
-                selected={selected}
-                onSelect={setSelected}
-                highlight={highlight}
-                onHighlight={setHighlight}
-              />
+              {q.status === "SHARED" ? (
+                <ReviewPanel quote={q} onQuote={quote.set} run={action.run} busy={action.busy !== undefined} />
+              ) : (
+                <ItemsPanel
+                  quote={q}
+                  selected={selected}
+                  onSelect={setSelected}
+                  highlight={highlight}
+                  onHighlight={setHighlight}
+                />
+              )}
             </s-stack>
             <Conversation quote={q} />
           </s-grid>

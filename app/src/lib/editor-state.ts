@@ -28,6 +28,8 @@ export interface EditorState {
   expiresOn: string;
   repNote: string;
   internalNote: string;
+  /** `StaffQuote.rev` when the editor loaded; sent back so a save cannot overwrite lines the customer changed. */
+  rev?: number;
 }
 
 export function toEditorLine(l: StaffQuoteLine): EditorLine {
@@ -79,6 +81,7 @@ export function stateFromQuote(q: StaffQuote): EditorState {
     expiresOn: isoToDateInput(q.workingExpiresAt),
     repNote: q.workingRepNote ?? "",
     internalNote: q.workingInternalNote ?? "",
+    ...(q.rev !== undefined ? { rev: q.rev } : {}),
   };
 }
 
@@ -95,6 +98,7 @@ export function toDraftRequest(s: EditorState): DraftRevisionRequest {
     expiresAt: dateInputToIso(s.expiresOn),
     repNote: s.repNote.trim() === "" ? null : s.repNote,
     internalNote: s.internalNote.trim() === "" ? null : s.internalNote,
+    ...(s.rev !== undefined ? { rev: s.rev } : {}),
   };
 }
 
@@ -173,6 +177,9 @@ export interface QuoteActions {
   canDecline: boolean;
   /** Working lines are editable only while sales owns the next move. */
   canEdit: boolean;
+  canShare: boolean;
+  canUnshare: boolean;
+  canDelete: boolean;
 }
 
 /** Derived from the shared state machine so the UI never invents transitions. */
@@ -184,6 +191,9 @@ export function quoteActions(status: QuoteStatus): QuoteActions {
     canReopen: canTransition(status, "REOPEN", "staff"),
     canDecline: canTransition(status, "DECLINE", "staff"),
     canEdit: canSend,
+    canShare: canTransition(status, "SHARE", "staff"),
+    canUnshare: canTransition(status, "UNSHARE", "staff"),
+    canDelete: canTransition(status, "DELETE", "staff"),
   };
 }
 
@@ -191,6 +201,7 @@ export function quoteActions(status: QuoteStatus): QuoteActions {
 
 export const STATUS_LABEL: Record<QuoteStatus, string> = {
   DRAFT: "Draft",
+  SHARED: "Shared for review",
   SUBMITTED: "Submitted",
   IN_REVIEW: "In review",
   QUOTE_READY: "Quote ready",
@@ -206,6 +217,7 @@ export type Tone = "info" | "warning" | "success" | "critical" | "neutral" | "ca
 
 export const STATUS_TONE: Record<QuoteStatus, Tone> = {
   DRAFT: "neutral",
+  SHARED: "info",
   SUBMITTED: "info",
   IN_REVIEW: "info",
   QUOTE_READY: "success",
@@ -250,6 +262,8 @@ export const INBOX_TABS: { id: InboxTab; label: string }[] = [
   { id: "accepted", label: "Accepted" },
   { id: "expiring", label: "Expiring" },
   { id: "all", label: "All" },
+  { id: "my_drafts", label: "My drafts" },
+  { id: "shared", label: "Shared" },
 ];
 
 export function isInboxTab(v: string | null | undefined): v is InboxTab {
