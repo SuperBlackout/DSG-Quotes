@@ -20,11 +20,18 @@ export async function nextQuoteNumber(tx: Tx, shop: string): Promise<number> {
   return rows[0]!.value;
 }
 
-/** Company-location scope applied to EVERY customer query (CLAUDE.md rule 3). */
+/**
+ * Company-location scope applied to EVERY customer query (CLAUDE.md rule 3).
+ *
+ * A DRAFT that a rep created (`createdByStaffId` set) is the rep's private working copy: customers at that location
+ * must not list it, open it, edit it, submit it or delete it. It becomes visible when the rep sends it (status leaves
+ * DRAFT). Customer-created drafts have `createdByStaffId = null` and stay visible to their location as before.
+ */
 export const scopeWhere = (deps: AppDeps, buyer: BuyerContext): Prisma.QuoteWhereInput => ({
   shop: deps.config.shopDomain,
   companyLocationId: buyer.companyLocationId,
   deletedAt: null,
+  NOT: { status: "DRAFT", createdByStaffId: { not: null } },
 });
 
 /** Load a quote inside the caller's company location, optionally row-locked. Cross-company -> 404. */
