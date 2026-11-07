@@ -2,7 +2,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { api } from "../api/instance";
 import type { NotificationEvent, NotificationPrefs } from "../api/types";
-import { PRIVACY_URL, SMS_CONSENT_TEXT, TERMS_URL } from "../lib/consent";
+import { SMS_CONSENT_TEXT, privacyUrl, termsUrl } from "../lib/consent";
 import { formatShortDate } from "../lib/format";
 import {
   EVENT_DEFS,
@@ -309,9 +309,9 @@ export function Notifications() {
                         }
                       />
                       <s-stack direction="inline" gap="small">
-                        <s-link href={TERMS_URL} target="_blank">Terms</s-link>
+                        <s-link href={termsUrl()} target="_blank">Terms</s-link>
                         <s-text color="subdued">·</s-text>
-                        <s-link href={PRIVACY_URL} target="_blank">Privacy</s-link>
+                        <s-link href={privacyUrl()} target="_blank">Privacy</s-link>
                       </s-stack>
                     </s-stack>
                   </s-box>

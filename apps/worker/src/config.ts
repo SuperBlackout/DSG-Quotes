@@ -7,9 +7,9 @@ import type { EmailProvider, SmsProvider } from "./providers/types";
 export interface NotifyConfig {
   /** myshopify domain: scopes every query (one shop per deployment, like the API). */
   shop: string;
-  /** Customer-facing base URL, e.g. https://dsg.direct/apps/quotes. Quote links are `${appPublicUrl}/quotes/<id>`. */
+  /** Customer-facing base URL, e.g. https://www.dsg.direct/apps/quotes (use the www primary domain: the bare domain redirects and drops the path). Quote links are `${appPublicUrl}/quotes/<id>`. */
   appPublicUrl: string;
-  /** Storefront page that shows a dealer their quote (e.g. https://dsg.direct/pages/quote); links are `<page>?id=<quoteId>`. Falls back to `${appPublicUrl}/quotes/<id>` when unset. */
+  /** Storefront page that shows a dealer their quote (e.g. https://www.dsg.direct/pages/quote); links are `<page>?id=<quoteId>`. Falls back to `${appPublicUrl}/quotes/<id>` when unset. */
   customerQuotePageUrl: string;
   /** Base for staff links: `${adminQuoteUrl}/<quoteId>`. */
   adminQuoteUrl: string;

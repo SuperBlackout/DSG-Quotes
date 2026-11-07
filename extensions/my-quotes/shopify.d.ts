@@ -7,3 +7,8 @@ declare module "./src/api/instance.ts" {
   const shopify: import("@shopify/ui-extensions/customer-account.page.render").Api;
   const globalThis: { shopify: typeof shopify };
 }
+
+declare module "./src/lib/consent.ts" {
+  const shopify: import("@shopify/ui-extensions/customer-account.page.render").Api;
+  const globalThis: { shopify: typeof shopify };
+}

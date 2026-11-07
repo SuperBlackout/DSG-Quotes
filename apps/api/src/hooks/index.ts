@@ -224,7 +224,7 @@ export async function hookRoutes(app: FastifyInstance, opts: HookOptions) {
       if (out.kind === "stop") return twiml(); // Twilio's Advanced Opt-Out sends the carrier-required confirmation itself
       if (out.kind === "confirmed") return twiml(WELCOME_TEXT);
       if (out.kind === "start") return twiml("DSG Quotes: to turn text alerts back on, open My Quotes > Notification settings and confirm your number.");
-      if (out.kind === "no_context") return twiml("DSG Quotes: we could not match your text to a quote. Please reply from My Quotes on dsg.direct.");
+      if (out.kind === "no_context") return twiml("DSG Quotes: we could not match your text to a quote. Please reply from My Quotes in your DSG account.");
       return twiml();
     });
   }

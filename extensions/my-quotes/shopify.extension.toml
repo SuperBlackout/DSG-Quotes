@@ -33,3 +33,9 @@ key = "api_base_url"
 type = "single_line_text_field"
 name = "Quotes API base URL"
 description = "Origin of the DSG Quotes API that serves /c/* (for example https://quotes.dsg.direct). No trailing slash."
+
+[[extensions.settings.fields]]
+key = "storefront_url"
+type = "single_line_text_field"
+name = "Storefront URL"
+description = "Primary storefront origin used for the Terms and Privacy links (for example https://www.dsg.direct). Use the www address, no trailing slash. Leave empty for the default."

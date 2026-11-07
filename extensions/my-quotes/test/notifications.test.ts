@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SMS_CONSENT_TEXT, consentPayload } from "../src/lib/consent";
+import { DEFAULT_STOREFRONT_URL, SMS_CONSENT_TEXT, consentPayload, normalizeStorefrontUrl } from "../src/lib/consent";
 import {
   EVENT_DEFS,
   EVENT_KEYS,
@@ -241,5 +241,18 @@ describe("time options", () => {
     expect(opts.find((o) => o.value === "19:00")?.label).toBe("7:00 PM");
     expect(opts.find((o) => o.value === "00:00")?.label).toBe("12:00 AM");
     expect(formatTime("12:30")).toBe("12:30 PM");
+  });
+});
+
+describe("storefront URL setting", () => {
+  it("accepts an https origin and strips trailing slashes", () => {
+    expect(normalizeStorefrontUrl("https://www.example.com/")).toBe("https://www.example.com");
+    expect(normalizeStorefrontUrl("  https://shop.example.org  ")).toBe("https://shop.example.org");
+  });
+  it("falls back to the www default for empty, http or path values", () => {
+    for (const v of [undefined, null, "", "http://www.dsg.direct", "https://www.dsg.direct/pages", "dsg.direct", 5]) {
+      expect(normalizeStorefrontUrl(v)).toBe(DEFAULT_STOREFRONT_URL);
+    }
+    expect(DEFAULT_STOREFRONT_URL).toBe("https://www.dsg.direct");
   });
 });
